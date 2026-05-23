@@ -350,9 +350,16 @@ class ServerManager: ObservableObject {
             return bundledServer
         }
 
-        // 2. Relative paths (dev builds)
+        // 2. Server folder next to a command-line release binary
+        let executableDir = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+            .path
+
+        // 3. Relative paths (dev builds)
         let execDir = Bundle.main.bundlePath
         let candidates = [
+            (executableDir as NSString).appendingPathComponent("server"),
             (execDir as NSString).appendingPathComponent("../../../server"),
             (execDir as NSString).appendingPathComponent("../../server"),
             FileManager.default.homeDirectoryForCurrentUser.path + "/Documents/GitHub/bambu-slicer/server",
