@@ -67,14 +67,14 @@ struct ServerMenuView: View {
                     HStack {
                         Text("Port:")
                             .foregroundColor(.secondary)
-                        Text("4000")
+                        Text("8005")
                             .fontDesign(.monospaced)
                     }
 
                     HStack {
                         Text("URL:")
                             .foregroundColor(.secondary)
-                        Text("http://localhost:4000")
+                        Text("http://localhost:8005")
                             .fontDesign(.monospaced)
                             .textSelection(.enabled)
                     }
@@ -237,9 +237,9 @@ class ServerManager: ObservableObject {
                 if str.contains("running on port") {
                     self?.isRunning = true
                 }
-                if str.contains("CuraEngine:") {
-                    if str.contains("NOT FOUND") {
-                        self?.engineStatus = "Basic slicer (install CuraEngine for full support)"
+                if str.contains("Engine:") {
+                    if str.contains("not ready") {
+                        self?.engineStatus = "Slicer engine missing"
                     } else {
                         self?.engineStatus = "CuraEngine"
                     }
@@ -259,7 +259,7 @@ class ServerManager: ObservableObject {
         do {
             try proc.run()
             process = proc
-            appendLog("Starting server on port 4000...")
+            appendLog("Starting server on port 8005...")
         } catch {
             self.error = "Failed to start: \(error.localizedDescription)"
         }

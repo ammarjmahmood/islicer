@@ -1,15 +1,15 @@
 #!/bin/bash
 set -e
 
-# BambuSlicer Server — One-command install
+# BambuSlicer Bridge — One-command install
 # Usage: curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
 
 INSTALL_DIR="$HOME/bambu-slicer-server"
 SERVICE_NAME="bambu-slicer"
-PORT=4000
+PORT=8005
 
 echo "================================================"
-echo "  BambuSlicer Server Installer"
+echo "  BambuSlicer Bridge Installer"
 echo "================================================"
 echo ""
 
@@ -29,19 +29,21 @@ if ! command -v node &>/dev/null; then
 fi
 echo "[✓] Node.js $(node --version)"
 
-# Install CuraEngine
+# Install CuraEngine. The bridge refuses to fake a slice; if CuraEngine or
+# its printer definitions are missing, /health will explain what to install.
 if ! command -v CuraEngine &>/dev/null; then
     echo "[!] CuraEngine not found. Installing..."
     if command -v apt-get &>/dev/null; then
-        sudo apt-get install -y curaengine 2>/dev/null || echo "[!] CuraEngine not in apt — basic slicer will be used"
+        sudo apt-get update
+        sudo apt-get install -y curaengine 2>/dev/null || echo "[!] CuraEngine not in apt — install Cura or set CURA_ENGINE_PATH manually"
     elif command -v brew &>/dev/null; then
-        brew install curaengine 2>/dev/null || echo "[!] CuraEngine not in brew — basic slicer will be used"
+        brew install curaengine 2>/dev/null || echo "[!] CuraEngine not in brew — install Cura or set CURA_ENGINE_PATH manually"
     fi
 fi
 if command -v CuraEngine &>/dev/null; then
     echo "[✓] CuraEngine installed"
 else
-    echo "[!] CuraEngine not available — using basic slicer (still works)"
+    echo "[!] CuraEngine not available — install it before slicing"
 fi
 
 # Check for Tailscale
@@ -65,7 +67,7 @@ if [ -d "$INSTALL_DIR" ]; then
     cd "$INSTALL_DIR"
     git pull 2>/dev/null || true
 else
-    echo "[*] Downloading BambuSlicer Server..."
+    echo "[*] Downloading BambuSlicer Bridge..."
     # If running from curl pipe, clone the repo
     if [ -d "$(dirname "$0")/package.json" ] 2>/dev/null; then
         # Running from local copy
@@ -78,15 +80,17 @@ else
             cat > package.json << 'PKGJSON'
 {
   "name": "bambu-slicer-server",
-  "version": "1.0.0",
-  "description": "Slice server for BambuSlicer app",
+  "version": "2.0.0",
+  "description": "Always-on BambuSlicer bridge",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
   "dependencies": {
+    "basic-ftp": "^6.0.1",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
+    "mqtt": "^5.15.1",
     "multer": "^1.4.5-lts.1",
-    "uuid": "^9.0.0",
-    "cors": "^2.8.5"
+    "uuid": "^9.0.0"
   }
 }
 PKGJSON
@@ -108,7 +112,7 @@ if command -v systemctl &>/dev/null; then
     echo "[*] Setting up systemd service..."
     sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
 [Unit]
-Description=BambuSlicer Server
+Description=BambuSlicer Bridge
 After=network.target tailscaled.service
 Wants=tailscaled.service
 
@@ -135,7 +139,7 @@ EOF
     sleep 2
     if systemctl is-active --quiet ${SERVICE_NAME}; then
         echo "================================================"
-        echo "  BambuSlicer Server is RUNNING"
+        echo "  BambuSlicer Bridge is RUNNING"
         echo "================================================"
         echo ""
         echo "  Local:     http://localhost:$PORT"
@@ -159,7 +163,7 @@ else
     # No systemd (macOS or older Linux) — just run it
     echo ""
     echo "================================================"
-    echo "  BambuSlicer Server installed"
+    echo "  BambuSlicer Bridge installed"
     echo "================================================"
     echo ""
     echo "  Start with: cd $INSTALL_DIR && node index.js"

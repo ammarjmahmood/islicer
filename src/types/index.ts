@@ -2,7 +2,8 @@ export interface PrinterConfig {
   id: string;
   name: string;
   ip: string;
-  accessCode: string;
+  accessCode?: string;
+  hasAccessCode?: boolean;
   serialNumber: string;
   model: 'P1S' | 'P1P' | 'X1C' | 'X1' | 'A1' | 'A1Mini';
   isOnline: boolean;
@@ -43,6 +44,7 @@ export interface ModelFile {
 
 export interface SliceJob {
   id: string;
+  serverJobId?: string;
   modelId: string;
   modelName: string;
   status: 'queued' | 'slicing' | 'done' | 'error';

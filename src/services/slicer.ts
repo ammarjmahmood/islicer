@@ -1,32 +1,53 @@
 import { Paths, File, Directory } from 'expo-file-system';
 import { SliceSettings, SliceJob } from '../types';
-import { getSliceServerUrl, saveSliceJob } from './storage';
+import { saveSliceJob } from './storage';
+import { resolveBridgeUrl } from './bridge';
 
-/**
- * Resolve the slicer server URL.
- * User configures this in Settings with their Tailscale IP or custom URL.
- */
-async function resolveServerUrl(): Promise<string> {
-  const configured = await getSliceServerUrl();
-  if (configured) {
-    // Quick health check
-    try {
-      const res = await fetch(`${configured}/health`, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) return configured;
-    } catch {}
-    // Still return it — might be a transient failure
-    return configured;
-  }
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Try localhost as last resort (same machine / simulator)
+async function finishSliceJob(job: SliceJob, serverUrl: string, serverJobId: string) {
   try {
-    const res = await fetch('http://localhost:4000/health', { signal: AbortSignal.timeout(2000) });
-    if (res.ok) return 'http://localhost:4000';
-  } catch {}
+    let remoteStatus: any = null;
+    const startedPolling = Date.now();
+    while (Date.now() - startedPolling < 20 * 60 * 1000) {
+      const statusResponse = await fetch(`${serverUrl}/status/${serverJobId}`);
+      if (!statusResponse.ok) {
+        throw new Error(await statusResponse.text());
+      }
+      remoteStatus = await statusResponse.json();
+      job.progress = remoteStatus.progress || job.progress;
+      await saveSliceJob(job);
 
-  throw new Error(
-    'Slicer server not configured. Go to Settings and enter your server URL.'
-  );
+      if (remoteStatus.status === 'done') break;
+      if (remoteStatus.status === 'error') {
+        throw new Error(remoteStatus.error || 'Slicing failed on bridge.');
+      }
+
+      await sleep(2000);
+    }
+
+    if (!remoteStatus || remoteStatus.status !== 'done' || !remoteStatus.gcodeUrl) {
+      throw new Error('Slicing timed out on bridge.');
+    }
+
+    const gcodeDir = new Directory(Paths.document, 'gcode');
+    gcodeDir.create();
+    const downloaded = await File.downloadFileAsync(`${serverUrl}${remoteStatus.gcodeUrl}`, gcodeDir);
+
+    job.status = 'done';
+    job.progress = 100;
+    job.gcodeUri = downloaded.uri;
+    job.estimatedTime = remoteStatus.estimatedTime;
+    job.estimatedFilament = remoteStatus.estimatedFilament;
+    job.completedAt = Date.now();
+    await saveSliceJob(job);
+  } catch (err: any) {
+    job.status = 'error';
+    job.progress = 100;
+    job.error = err.message;
+    job.completedAt = Date.now();
+    await saveSliceJob(job);
+  }
 }
 
 export async function startSliceJob(
@@ -35,7 +56,7 @@ export async function startSliceJob(
   settings: SliceSettings,
   presetName: string,
 ): Promise<SliceJob> {
-  const serverUrl = await resolveServerUrl();
+  const serverUrl = await resolveBridgeUrl();
 
   const jobId = `slice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -76,21 +97,11 @@ export async function startSliceJob(
     }
 
     const result = await response.json();
-
-    const gcodeDir = new Directory(Paths.document, 'gcode');
-    gcodeDir.create();
-    const gcodeFile = new File(gcodeDir, `${jobId}.gcode`);
-
-    await File.downloadFileAsync(`${serverUrl}${result.gcodeUrl}`, gcodeDir);
-
-    job.status = 'done';
-    job.progress = 100;
-    job.gcodeUri = gcodeFile.uri;
-    job.estimatedTime = result.estimatedTime;
-    job.estimatedFilament = result.estimatedFilament;
-    job.completedAt = Date.now();
+    job.serverJobId = result.jobId;
+    job.progress = 10;
     await saveSliceJob(job);
 
+    void finishSliceJob(job, serverUrl, result.jobId);
     return job;
   } catch (err: any) {
     job.status = 'error';
@@ -105,7 +116,7 @@ export async function pollSliceStatus(
   onProgress: (progress: number) => void,
 ): Promise<SliceJob | null> {
   try {
-    const serverUrl = await resolveServerUrl();
+    const serverUrl = await resolveBridgeUrl();
     const response = await fetch(`${serverUrl}/status/${jobId}`);
     const data = await response.json();
     onProgress(data.progress || 0);

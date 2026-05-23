@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>iSlicer Bridge</title>
+    <meta
+      name="description"
+      content="Slice STL and 3MF files from iPhone, route through an always-on Mac or Ubuntu bridge, and send prints to Bambu Lab printers from anywhere."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="iSlicer Bridge home">
+        <span class="brand-mark">iS</span>
+        <span>iSlicer Bridge</span>
+      </a>
+      <nav aria-label="Primary">
+        <a href="#download">Download</a>
+        <a href="#install">Install</a>
+        <a href="#ios">iOS</a>
+        <a href="#remote">Remote</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-scene" aria-hidden="true">
+          <div class="signal-line line-a"></div>
+          <div class="signal-line line-b"></div>
+          <div class="phone">
+            <div class="phone-bar"></div>
+            <div class="phone-screen">
+              <span class="file-chip">gearbox.stl</span>
+              <span class="slice-chip">Slicing 72%</span>
+              <span class="send-chip">Send to P1S</span>
+            </div>
+          </div>
+          <div class="bridge-node">
+            <span></span>
+            <strong>Mac / Ubuntu</strong>
+          </div>
+          <div class="printer">
+            <div class="printer-top"></div>
+            <div class="printer-window">
+              <div class="print-head"></div>
+              <div class="print-bed"></div>
+            </div>
+            <div class="printer-foot"></div>
+          </div>
+        </div>
+
+        <div class="hero-copy">
+          <p class="eyebrow">iPhone slicing for Bambu Lab printers</p>
+          <h1 id="hero-title">iSlicer Bridge</h1>
+          <p class="hero-text">
+            Import an STL or 3MF on your iPhone, slice it on a Mac or Ubuntu box that stays on, then dispatch it to a P1S, P1P, X1C, A1, or A1 mini from cellular, hotel Wi-Fi, or home.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#download">Download bridge</a>
+            <a class="button secondary" href="#install">One-command setup</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="reel-section" aria-labelledby="reel-title">
+        <div class="section-copy">
+          <p class="eyebrow">Demo reel</p>
+          <h2 id="reel-title">Phone to bridge to printer</h2>
+          <p>
+            The app never needs direct access to the printer from the road. Tailscale carries your iPhone to the bridge; the bridge talks to the printer on the home LAN.
+          </p>
+        </div>
+        <div class="demo-reel" role="img" aria-label="Animated demo showing a phone uploading a model to a bridge and a bridge sending a print to a Bambu printer">
+          <div class="reel-toolbar">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="reel-track">
+            <div class="reel-step active">Import</div>
+            <div class="reel-step">Slice</div>
+            <div class="reel-step">Upload</div>
+            <div class="reel-step">Print</div>
+          </div>
+          <div class="reel-grid">
+            <div class="reel-card phone-card">
+              <small>iPhone</small>
+              <strong>bracket.3mf</strong>
+              <span>Preset: Strong</span>
+            </div>
+            <div class="reel-pulse"></div>
+            <div class="reel-card bridge-card">
+              <small>Bridge</small>
+              <strong>CuraEngine</strong>
+              <span>G-code ready</span>
+            </div>
+            <div class="reel-pulse delay"></div>
+            <div class="reel-card printer-card">
+              <small>Bambu P1S</small>
+              <strong>Starting</strong>
+              <span>FTPS + MQTT</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="download" class="download-section" aria-labelledby="download-title">
+        <div class="section-copy">
+          <p class="eyebrow">Download</p>
+          <h2 id="download-title">Install the bridge app</h2>
+          <p>
+            No rented server, no cloud account, no network plumbing. Install this on the computer that stays on near the printer, then paste its Tailscale IP into the iPhone app.
+          </p>
+        </div>
+        <div class="download-grid">
+          <article>
+            <span class="download-icon">mac</span>
+            <h3>macOS bridge</h3>
+            <p>Menu-bar bridge build for Apple Silicon Macs. Runs the bridge on port 8005.</p>
+            <a class="button primary" href="./downloads/iSlicer-Bridge-macOS-arm64.zip">Download Mac build</a>
+          </article>
+          <article>
+            <span class="download-icon">deb</span>
+            <h3>Ubuntu bridge</h3>
+            <p>One script installs Node, the bridge, and the background service.</p>
+            <a class="button secondary" href="./downloads/install-bridge.sh">Download install script</a>
+          </article>
+          <article>
+            <span class="download-icon">ios</span>
+            <h3>iPhone app</h3>
+            <p>The App Store build is prepared in the repo. Final upload needs Apple signing and App Store Connect access.</p>
+            <a class="button secondary" href="#ios">App Store steps</a>
+          </article>
+        </div>
+      </section>
+
+      <section id="install" class="install-section" aria-labelledby="install-title">
+        <div class="section-copy">
+          <p class="eyebrow">One command</p>
+          <h2 id="install-title">The simple setup</h2>
+          <p>
+            Most users only need this flow: install the bridge, sign into Tailscale, paste the IP in the iPhone app, add printer.
+          </p>
+        </div>
+
+        <div class="platform-tabs" role="tablist" aria-label="Install platform">
+          <button class="tab active" data-platform="ubuntu" type="button">Ubuntu</button>
+          <button class="tab" data-platform="mac" type="button">macOS</button>
+          <button class="tab" data-platform="docker" type="button">Docker</button>
+        </div>
+
+        <div class="install-panel" data-panel="ubuntu">
+          <ol>
+            <li>Open Terminal on your Ubuntu box.</li>
+            <li>Paste this one command.</li>
+            <li>The installer prints the Tailscale bridge URL on port 8005.</li>
+          </ol>
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
+sudo tailscale up
+tailscale ip -4</code></pre>
+        </div>
+
+        <div class="install-panel hidden" data-panel="mac">
+          <ol>
+            <li>Download the Mac bridge from this page.</li>
+            <li>Launch it from the menu bar.</li>
+            <li>Paste the Tailscale IP in iOS Settings.</li>
+          </ol>
+          <pre><code>Bridge URL format:
+http://100.x.x.x:8005</code></pre>
+        </div>
+
+        <div class="install-panel hidden" data-panel="docker">
+          <ol>
+            <li>Build the bridge container on the always-on machine.</li>
+            <li>Expose port 8005 to Tailscale or your LAN.</li>
+            <li>Add printers from the iOS app.</li>
+          </ol>
+          <pre><code>docker build -t islicer-bridge ./server
+docker run -d --name islicer -p 8005:8005 --restart unless-stopped islicer-bridge</code></pre>
+        </div>
+      </section>
+
+      <section id="ios" class="ios-section" aria-labelledby="ios-title">
+        <div class="section-copy">
+          <p class="eyebrow">iOS deployment</p>
+          <h2 id="ios-title">Archive, launch, print</h2>
+          <p>
+            Build the Expo iOS app, archive it from Xcode, then install through TestFlight, Ad Hoc, or your Apple Developer workflow.
+          </p>
+        </div>
+        <div class="steps-grid">
+          <article>
+            <span>1</span>
+            <h3>Build native iOS</h3>
+            <pre><code>npm install
+npx expo run:ios</code></pre>
+          </article>
+          <article>
+            <span>2</span>
+            <h3>Archive</h3>
+            <pre><code>open ios/BambuSlicer.xcworkspace</code></pre>
+          </article>
+          <article>
+            <span>3</span>
+            <h3>Connect bridge</h3>
+            <p>Open Settings, choose Tailscale, paste the bridge IP, then tap Test.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="remote" class="remote-section" aria-labelledby="remote-title">
+        <div class="section-copy">
+          <p class="eyebrow">Anywhere mode</p>
+          <h2 id="remote-title">Works off-network without exposing your printer</h2>
+          <p>
+            Tailscale gives your phone a private route to the bridge. The printer stays private at home, and the bridge is the only machine that needs printer LAN access. The bridge listens on TCP port 8005; Tailscale itself uses UDP 41641 for direct peer-to-peer tunnels when available.
+          </p>
+        </div>
+        <div class="route-map" aria-label="Remote route">
+          <div>iPhone</div>
+          <span>Cellular / Wi-Fi</span>
+          <div>Tailscale</div>
+          <span>Private tunnel</span>
+          <div>Bridge</div>
+          <span>Home LAN</span>
+          <div>Bambu printer</div>
+        </div>
+      </section>
+
+      <section id="review" class="review-section" aria-labelledby="review-title">
+        <div class="section-copy">
+          <p class="eyebrow">Code review notes</p>
+          <h2 id="review-title">What this build guarantees</h2>
+          <p>
+            The app now avoids unsupported direct cloud-print assumptions. Slicing requires a real engine on the bridge, and printer dispatch uses the local Bambu LAN pattern: FTPS file upload plus MQTT print command.
+          </p>
+        </div>
+        <div class="review-grid">
+          <article>
+            <h3>No fake slices</h3>
+            <p>The bridge reports an error if CuraEngine or its definitions are missing instead of generating placeholder G-code.</p>
+          </article>
+          <article>
+            <h3>Credentials stay home</h3>
+            <p>LAN access codes are stored in the bridge config, not passed to public cloud services.</p>
+          </article>
+          <article>
+            <h3>Remote path is explicit</h3>
+            <p>Cellular printing works when the iPhone can reach the bridge through Tailscale, VPN, or a custom URL.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>iSlicer Bridge</span>
+      <span>Mac, Ubuntu, iPhone, Bambu Lab.</span>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

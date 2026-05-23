@@ -15,6 +15,6 @@ COPY . .
 
 RUN mkdir -p uploads gcode
 
-EXPOSE 4000
+EXPOSE 8005
 
 CMD ["node", "index.js"]

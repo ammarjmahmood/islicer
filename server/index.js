@@ -5,147 +5,212 @@ const { v4: uuidv4 } = require('uuid');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const ftp = require('basic-ftp');
+const mqtt = require('mqtt');
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT || 8005);
+const VERSION = '2.0.0';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
-// Storage for uploaded models and generated G-code
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-const GCODE_DIR = path.join(__dirname, 'gcode');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-fs.mkdirSync(GCODE_DIR, { recursive: true });
+const ROOT_DIR = __dirname;
+const UPLOAD_DIR = path.join(ROOT_DIR, 'uploads');
+const GCODE_DIR = path.join(ROOT_DIR, 'gcode');
+const DATA_DIR = path.join(ROOT_DIR, 'data');
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+const JOBS_PATH = path.join(DATA_DIR, 'jobs.json');
 
-// Serve G-code files
+for (const dir of [UPLOAD_DIR, GCODE_DIR, DATA_DIR]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 app.use('/gcode', express.static(GCODE_DIR));
 
-const upload = multer({ dest: UPLOAD_DIR });
-
-// Track slice jobs
-const jobs = new Map();
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', engine: 'CuraEngine', version: '1.0.0' });
+const upload = multer({
+  dest: UPLOAD_DIR,
+  limits: { fileSize: Number(process.env.MAX_MODEL_MB || 250) * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (ext === '.stl' || ext === '.3mf') return cb(null, true);
+    cb(new Error('Only STL and 3MF files are supported.'));
+  },
 });
 
-// Slice endpoint
-app.post('/slice', upload.single('model'), async (req, res) => {
+const jobs = loadJobs();
+
+function loadJobs() {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No model file uploaded' });
-    }
-
-    const settings = JSON.parse(req.body.settings || '{}');
-    const filename = req.body.filename || 'model.stl';
-    const jobId = uuidv4();
-
-    // Rename uploaded file to keep extension
-    const ext = path.extname(filename).toLowerCase();
-    const modelPath = path.join(UPLOAD_DIR, `${jobId}${ext}`);
-    fs.renameSync(req.file.path, modelPath);
-
-    const gcodePath = path.join(GCODE_DIR, `${jobId}.gcode`);
-
-    jobs.set(jobId, { status: 'slicing', progress: 0 });
-
-    // Build CuraEngine command
-    const curaArgs = buildCuraArgs(modelPath, gcodePath, settings);
-
-    // Try CuraEngine first, fall back to built-in slicer
-    const curaPath = findCuraEngine();
-
-    if (curaPath) {
-      execFile(curaPath, curaArgs, { timeout: 300000 }, (error, stdout, stderr) => {
-        if (error) {
-          console.error('CuraEngine error:', error.message);
-          jobs.set(jobId, { status: 'error', error: error.message });
-          // Don't return error to client yet - they already got 200
-          return;
-        }
-
-        const stats = parseGcodeStats(gcodePath);
-        jobs.set(jobId, {
-          status: 'done',
-          progress: 100,
-          ...stats,
-        });
-      });
-    } else {
-      // Fallback: generate basic G-code from settings
-      // This is a simplified slicer for when CuraEngine isn't installed
-      generateBasicGcode(modelPath, gcodePath, settings);
-      const stats = parseGcodeStats(gcodePath);
-      jobs.set(jobId, { status: 'done', progress: 100, ...stats });
-    }
-
-    res.json({
-      jobId,
-      gcodeUrl: `/gcode/${jobId}.gcode`,
-      estimatedTime: 3600, // Will be updated when slicing completes
-      estimatedFilament: 25,
-    });
-  } catch (err) {
-    console.error('Slice error:', err);
-    res.status(500).json({ error: err.message });
+    const items = JSON.parse(fs.readFileSync(JOBS_PATH, 'utf8'));
+    return new Map(items.map((job) => [job.id, job]));
+  } catch {
+    return new Map();
   }
-});
+}
 
-// Job status
-app.get('/status/:jobId', (req, res) => {
-  const job = jobs.get(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
+function writeJobs() {
+  fs.writeFileSync(JOBS_PATH, JSON.stringify([...jobs.values()], null, 2));
+}
+
+function setJob(jobId, job) {
+  jobs.set(jobId, job);
+  writeJobs();
+}
+
+function readConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch {
+    return { printers: [] };
   }
-  res.json(job);
-});
+}
 
-// Build CuraEngine CLI args from slice settings
+function writeConfig(config) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  try {
+    fs.chmodSync(CONFIG_PATH, 0o600);
+  } catch {}
+}
+
+function publicPrinter(printer) {
+  const { accessCode, ...safe } = printer;
+  return {
+    ...safe,
+    hasAccessCode: Boolean(accessCode),
+  };
+}
+
+function sanitizeModelName(name, fallback = 'model.stl') {
+  const base = path.basename(name || fallback).replace(/[^a-zA-Z0-9._-]/g, '_');
+  return base || fallback;
+}
+
+function sanitizePrinterFileName(name) {
+  const parsed = path.parse(sanitizeModelName(name, 'print.gcode'));
+  return `${parsed.name.slice(0, 48)}_${Date.now()}.gcode`.replace(/_+/g, '_');
+}
+
+function requirePrinterFields(body) {
+  const name = String(body.name || '').trim();
+  const ip = String(body.ip || '').trim();
+  const serialNumber = String(body.serialNumber || '').trim();
+  const accessCode = String(body.accessCode || '').trim();
+  const model = String(body.model || 'P1S').trim();
+
+  if (!name) throw new Error('Printer name is required.');
+  if (!ip) throw new Error('Printer IP is required.');
+  if (!serialNumber) throw new Error('Printer serial number is required.');
+  if (!accessCode) throw new Error('LAN access code is required.');
+
+  return { name, ip, serialNumber, accessCode, model };
+}
+
+function getPrinter(id) {
+  const config = readConfig();
+  const printer = config.printers.find((p) => p.id === id);
+  if (!printer) {
+    const err = new Error('Printer not found.');
+    err.status = 404;
+    throw err;
+  }
+  return printer;
+}
+
+function getLocalAddresses() {
+  const addresses = [];
+  for (const interfaces of Object.values(os.networkInterfaces())) {
+    for (const item of interfaces || []) {
+      if (item.family === 'IPv4' && !item.internal) {
+        addresses.push(item.address);
+      }
+    }
+  }
+  return addresses;
+}
+
+function commandExists(command) {
+  try {
+    const { execSync } = require('child_process');
+    return execSync(`command -v ${command}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function findCuraEngine() {
+  const possiblePaths = [
+    process.env.CURA_ENGINE_PATH,
+    '/usr/local/bin/CuraEngine',
+    '/usr/bin/CuraEngine',
+    '/opt/homebrew/bin/CuraEngine',
+    '/Applications/UltiMaker Cura.app/Contents/MacOS/CuraEngine',
+    path.join(ROOT_DIR, 'CuraEngine'),
+    '/app/CuraEngine',
+    commandExists('CuraEngine'),
+  ].filter(Boolean);
+
+  return possiblePaths.find((p) => fs.existsSync(p)) || null;
+}
+
+function findCuraDefinition() {
+  const possiblePaths = [
+    process.env.CURA_DEFINITION_PATH,
+    '/usr/share/cura/resources/definitions/fdmprinter.def.json',
+    '/usr/share/cura/resources/definitions/creality_base.def.json',
+    '/Applications/UltiMaker Cura.app/Contents/Resources/share/cura/resources/definitions/fdmprinter.def.json',
+  ].filter(Boolean);
+
+  return possiblePaths.find((p) => fs.existsSync(p)) || null;
+}
+
+function engineStatus() {
+  const curaPath = findCuraEngine();
+  const definitionPath = findCuraDefinition();
+  return {
+    name: 'CuraEngine',
+    available: Boolean(curaPath && definitionPath),
+    executable: curaPath,
+    definition: definitionPath,
+    note: curaPath && !definitionPath
+      ? 'CuraEngine was found, but no printer definition was found. Set CURA_DEFINITION_PATH.'
+      : undefined,
+  };
+}
+
 function buildCuraArgs(modelPath, gcodePath, settings) {
-  const args = ['slice', '-o', gcodePath, '-l', modelPath];
+  const definitionPath = findCuraDefinition();
+  if (!definitionPath) {
+    throw new Error('Cura printer definition not found. Set CURA_DEFINITION_PATH or install Cura resources.');
+  }
 
-  // Map our settings to CuraEngine settings
+  const args = ['slice', '-j', definitionPath, '-o', gcodePath, '-l', modelPath];
+
+  const printerModel = settings.printerModel || 'P1S';
+  const isMini = printerModel === 'A1Mini';
   const settingsMap = {
-    'layer_height': settings.layerHeight || 0.2,
-    'infill_sparse_density': settings.infillDensity || 15,
-    'wall_line_count': settings.wallCount || 3,
-    'top_layers': settings.topLayers || 4,
-    'bottom_layers': settings.bottomLayers || 4,
-    'support_enable': settings.supportEnabled ? 'True' : 'False',
-    'speed_print': settings.printSpeed || 250,
-    'material_print_temperature': settings.temperature || 220,
-    'material_bed_temperature': settings.bedTemperature || 60,
-    'cool_fan_speed': settings.fanSpeed || 100,
-    // P1S build volume
-    'machine_width': 256,
-    'machine_depth': 256,
-    'machine_height': 256,
+    layer_height: settings.layerHeight || 0.2,
+    infill_sparse_density: settings.infillDensity || 15,
+    wall_line_count: settings.wallCount || 3,
+    top_layers: settings.topLayers || 4,
+    bottom_layers: settings.bottomLayers || 4,
+    support_enable: settings.supportEnabled ? 'True' : 'False',
+    speed_print: settings.printSpeed || 250,
+    material_print_temperature: settings.temperature || 220,
+    material_bed_temperature: settings.bedTemperature || 60,
+    cool_fan_speed: settings.fanSpeed || 100,
+    machine_width: isMini ? 180 : 256,
+    machine_depth: isMini ? 180 : 256,
+    machine_height: isMini ? 180 : 256,
+    machine_center_is_zero: 'False',
+    machine_nozzle_size: settings.nozzleSize || 0.4,
+    adhesion_type: settings.adhesionType || 'skirt',
+    infill_pattern: settings.infillPattern || 'grid',
   };
 
-  // Infill patterns
-  const infillMap = {
-    grid: 'grid',
-    gyroid: 'gyroid',
-    honeycomb: 'tetrahedral',
-    lines: 'lines',
-    triangles: 'triangles',
-  };
-  settingsMap['infill_pattern'] = infillMap[settings.infillPattern] || 'grid';
-
-  // Adhesion
-  const adhesionMap = {
-    none: 'none',
-    skirt: 'skirt',
-    brim: 'brim',
-    raft: 'raft',
-  };
-  settingsMap['adhesion_type'] = adhesionMap[settings.adhesionType] || 'skirt';
-
-  // Support type
   if (settings.supportEnabled) {
-    settingsMap['support_structure'] = settings.supportType === 'tree' ? 'tree' : 'normal';
+    settingsMap.support_structure = settings.supportType === 'tree' ? 'tree' : 'normal';
   }
 
   for (const [key, value] of Object.entries(settingsMap)) {
@@ -155,72 +220,36 @@ function buildCuraArgs(modelPath, gcodePath, settings) {
   return args;
 }
 
-// Try to find CuraEngine binary
-function findCuraEngine() {
-  const possiblePaths = [
-    '/usr/local/bin/CuraEngine',
-    '/usr/bin/CuraEngine',
-    '/opt/homebrew/bin/CuraEngine',
-    path.join(__dirname, 'CuraEngine'),
-    // Common Docker/install paths
-    '/app/CuraEngine',
-  ];
+function sliceWithCura(modelPath, gcodePath, settings) {
+  return new Promise((resolve, reject) => {
+    const curaPath = findCuraEngine();
+    if (!curaPath) {
+      reject(new Error('CuraEngine is not installed. Install CuraEngine on the bridge machine before slicing.'));
+      return;
+    }
 
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) return p;
-  }
+    let args;
+    try {
+      args = buildCuraArgs(modelPath, gcodePath, settings);
+    } catch (err) {
+      reject(err);
+      return;
+    }
 
-  // Check PATH
-  const { execSync } = require('child_process');
-  try {
-    const result = execSync('which CuraEngine 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (result) return result;
-  } catch {}
-
-  return null;
+    execFile(curaPath, args, { timeout: 15 * 60 * 1000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || stdout || error.message));
+        return;
+      }
+      if (!fs.existsSync(gcodePath)) {
+        reject(new Error('Slicer completed but did not write a G-code file.'));
+        return;
+      }
+      resolve(parseGcodeStats(gcodePath));
+    });
+  });
 }
 
-// Generate basic G-code when CuraEngine isn't available
-// This creates a valid G-code file with the right structure for Bambu printers
-function generateBasicGcode(modelPath, gcodePath, settings) {
-  const lh = settings.layerHeight || 0.2;
-  const speed = settings.printSpeed || 250;
-  const temp = settings.temperature || 220;
-  const bedTemp = settings.bedTemperature || 60;
-
-  const gcode = [
-    '; Generated by BambuSlicer Server',
-    '; Model: ' + path.basename(modelPath),
-    '; Layer Height: ' + lh,
-    '; Speed: ' + speed,
-    '',
-    '; --- Start G-code ---',
-    'M140 S' + bedTemp + ' ; Set bed temp',
-    'M104 S' + temp + ' ; Set nozzle temp',
-    'M190 S' + bedTemp + ' ; Wait for bed temp',
-    'M109 S' + temp + ' ; Wait for nozzle temp',
-    'G28 ; Home all axes',
-    'G92 E0 ; Reset extruder',
-    'G1 Z5 F3000 ; Move up',
-    'G1 X10 Y10 F' + (speed * 60),
-    '',
-    '; --- NOTE: This is a placeholder G-code ---',
-    '; Install CuraEngine for real slicing:',
-    ';   brew install curaengine (macOS)',
-    ';   apt install curaengine (Linux)',
-    ';   Or use the Docker image',
-    '',
-    '; --- End G-code ---',
-    'M104 S0 ; Turn off nozzle',
-    'M140 S0 ; Turn off bed',
-    'G28 X Y ; Home X and Y',
-    'M84 ; Disable steppers',
-  ].join('\n');
-
-  fs.writeFileSync(gcodePath, gcode);
-}
-
-// Parse G-code file for time/filament estimates
 function parseGcodeStats(gcodePath) {
   try {
     const content = fs.readFileSync(gcodePath, 'utf8');
@@ -230,36 +259,272 @@ function parseGcodeStats(gcodePath) {
     let totalTime = 0;
 
     for (const line of lines) {
-      // Look for Cura's time estimate comments
       const timeMatch = line.match(/;TIME:(\d+)/);
-      if (timeMatch) totalTime = parseInt(timeMatch[1]);
+      if (timeMatch) totalTime = parseInt(timeMatch[1], 10);
 
-      const filamentMatch = line.match(/;Filament used: ([\d.]+)m/);
-      if (filamentMatch) totalE = parseFloat(filamentMatch[1]) * 1000; // mm to g approx
+      const filamentMatch = line.match(/;Filament used:\s*([\d.]+)m/i);
+      if (filamentMatch) totalE = parseFloat(filamentMatch[1]) * 1000;
 
-      // Track extrusion for manual estimation
-      const eMatch = line.match(/E([\d.]+)/);
+      const eMatch = line.match(/\sE([\d.]+)/);
       if (eMatch && !line.startsWith(';')) {
         const e = parseFloat(eMatch[1]);
-        if (e > totalE) totalE = e;
+        if (Number.isFinite(e) && e > totalE) totalE = e;
       }
     }
 
-    // Rough estimation: filament mm to grams (PLA ~1.24 g/cm³, 1.75mm diameter)
     const filamentGrams = totalE * 0.00243 * 1.24;
-
     return {
-      estimatedTime: totalTime || 3600,
-      estimatedFilament: Math.round(filamentGrams * 10) / 10 || 25,
+      estimatedTime: totalTime || undefined,
+      estimatedFilament: Number.isFinite(filamentGrams) && filamentGrams > 0
+        ? Math.round(filamentGrams * 10) / 10
+        : undefined,
     };
   } catch {
-    return { estimatedTime: 3600, estimatedFilament: 25 };
+    return {};
   }
 }
 
+async function uploadToPrinter(printer, sourcePath, targetFileName) {
+  const client = new ftp.Client(30_000);
+  client.ftp.verbose = process.env.DEBUG_FTP === '1';
+
+  try {
+    await client.access({
+      host: printer.ip,
+      port: Number(printer.ftpPort || 990),
+      user: 'bblp',
+      password: printer.accessCode,
+      secure: 'implicit',
+      secureOptions: { rejectUnauthorized: false },
+    });
+    await client.uploadFrom(sourcePath, targetFileName);
+  } finally {
+    client.close();
+  }
+}
+
+function publishPrinterCommand(printer, payload) {
+  return new Promise((resolve, reject) => {
+    const client = mqtt.connect({
+      host: printer.ip,
+      port: Number(printer.mqttPort || 8883),
+      protocol: 'mqtts',
+      username: 'bblp',
+      password: printer.accessCode,
+      rejectUnauthorized: false,
+      connectTimeout: 10_000,
+      reconnectPeriod: 0,
+    });
+
+    const timeout = setTimeout(() => {
+      client.end(true);
+      reject(new Error('Timed out connecting to printer MQTT.'));
+    }, 15_000);
+
+    client.on('connect', () => {
+      const topic = `device/${printer.serialNumber}/request`;
+      client.publish(topic, JSON.stringify(payload), { qos: 0 }, (err) => {
+        clearTimeout(timeout);
+        client.end(true);
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    client.on('error', (err) => {
+      clearTimeout(timeout);
+      client.end(true);
+      reject(err);
+    });
+  });
+}
+
+async function testPrinter(printer) {
+  const payload = {
+    pushing: {
+      sequence_id: String(Date.now()),
+      command: 'pushall',
+    },
+  };
+  await publishPrinterCommand(printer, payload);
+}
+
+async function printGcode(printer, gcodePath, originalName) {
+  if (!fs.existsSync(gcodePath)) throw new Error('G-code file not found on bridge.');
+
+  const targetFileName = sanitizePrinterFileName(originalName);
+  await uploadToPrinter(printer, gcodePath, targetFileName);
+
+  const payload = {
+    print: {
+      sequence_id: String(Date.now()),
+      command: 'gcode_file',
+      param: targetFileName,
+    },
+  };
+  await publishPrinterCommand(printer, payload);
+
+  return { targetFileName };
+}
+
+app.get('/health', (_req, res) => {
+  const config = readConfig();
+  res.json({
+    status: 'ok',
+    name: 'BambuSlicer Bridge',
+    version: VERSION,
+    port: PORT,
+    localAddresses: getLocalAddresses(),
+    engine: engineStatus(),
+    printers: config.printers.map(publicPrinter),
+  });
+});
+
+app.get('/printers', (_req, res) => {
+  const config = readConfig();
+  res.json({ printers: config.printers.map(publicPrinter) });
+});
+
+app.post('/printers', (req, res, next) => {
+  try {
+    const fields = requirePrinterFields(req.body);
+    const config = readConfig();
+    const id = req.body.id || `printer_${Date.now()}`;
+    const existingIndex = config.printers.findIndex((p) => p.id === id);
+    const printer = {
+      ...(existingIndex >= 0 ? config.printers[existingIndex] : {}),
+      id,
+      ...fields,
+      createdAt: existingIndex >= 0 ? config.printers[existingIndex].createdAt : Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    if (existingIndex >= 0) config.printers[existingIndex] = printer;
+    else config.printers.push(printer);
+
+    writeConfig(config);
+    res.json({ printer: publicPrinter(printer) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/printers/:id', (req, res) => {
+  const config = readConfig();
+  const before = config.printers.length;
+  config.printers = config.printers.filter((p) => p.id !== req.params.id);
+  writeConfig(config);
+  res.json({ ok: before !== config.printers.length });
+});
+
+app.post('/printers/:id/test', async (req, res, next) => {
+  try {
+    const printer = getPrinter(req.params.id);
+    await testPrinter(printer);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/slice', upload.single('model'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No model file uploaded.' });
+      return;
+    }
+
+    const settings = JSON.parse(req.body.settings || '{}');
+    const filename = sanitizeModelName(req.body.filename || req.file.originalname || 'model.stl');
+    const jobId = uuidv4();
+    const ext = path.extname(filename).toLowerCase();
+    const modelPath = path.join(UPLOAD_DIR, `${jobId}${ext}`);
+    const gcodePath = path.join(GCODE_DIR, `${jobId}.gcode`);
+
+    fs.renameSync(req.file.path, modelPath);
+
+    setJob(jobId, {
+      id: jobId,
+      status: 'slicing',
+      progress: 5,
+      filename,
+      modelPath,
+      gcodePath,
+      startedAt: Date.now(),
+    });
+
+    res.json({ jobId, statusUrl: `/status/${jobId}` });
+
+    try {
+      const stats = await sliceWithCura(modelPath, gcodePath, settings);
+      setJob(jobId, {
+        ...jobs.get(jobId),
+        status: 'done',
+        progress: 100,
+        gcodeUrl: `/gcode/${jobId}.gcode`,
+        completedAt: Date.now(),
+        ...stats,
+      });
+    } catch (err) {
+      setJob(jobId, {
+        ...jobs.get(jobId),
+        status: 'error',
+        progress: 100,
+        error: err.message,
+        completedAt: Date.now(),
+      });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/status/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: 'Job not found.' });
+    return;
+  }
+
+  const { modelPath, gcodePath, ...safeJob } = job;
+  res.json(safeJob);
+});
+
+app.post('/print', async (req, res, next) => {
+  try {
+    const { printerId, jobId } = req.body;
+    if (!printerId || !jobId) {
+      res.status(400).json({ error: 'printerId and jobId are required.' });
+      return;
+    }
+
+    const printer = getPrinter(printerId);
+    const job = jobs.get(jobId);
+    if (!job) {
+      res.status(404).json({ error: 'Slice job not found on bridge. Re-slice the file and try again.' });
+      return;
+    }
+    if (job.status !== 'done') {
+      res.status(409).json({ error: `Slice job is ${job.status}.` });
+      return;
+    }
+
+    const result = await printGcode(printer, job.gcodePath, job.filename);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.use((err, _req, res, _next) => {
+  const status = err.status || 500;
+  res.status(status).json({ error: err.message || 'Unexpected server error.' });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`BambuSlicer Server running on port ${PORT}`);
-  console.log(`CuraEngine: ${findCuraEngine() || 'NOT FOUND - using basic slicer'}`);
-  console.log(`Upload dir: ${UPLOAD_DIR}`);
-  console.log(`G-code dir: ${GCODE_DIR}`);
+  const engine = engineStatus();
+  console.log(`BambuSlicer Bridge ${VERSION} running on port ${PORT}`);
+  console.log(`Engine: ${engine.available ? `${engine.name} (${engine.executable})` : 'not ready'}`);
+  if (engine.note) console.log(`Engine note: ${engine.note}`);
+  console.log(`Data dir: ${DATA_DIR}`);
 });

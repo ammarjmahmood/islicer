@@ -6,24 +6,36 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS } from '../constants/theme';
 import { getSliceServerUrl, setSliceServerUrl } from '../services/storage';
 
-type ServerMode = 'tailscale' | 'local' | 'cloud' | 'custom';
+type ServerMode = 'tailscale' | 'local' | 'custom';
+type ServerStatus = 'unknown' | 'online' | 'offline';
 
-const LOCAL_URL = 'http://localhost:4000';
+const DEFAULT_PORT = '8005';
+
+function hostFromUrl(url: string): string {
+  const match = url.match(/^https?:\/\/([^:/]+)(?::\d+)?/);
+  return match?.[1] || '';
+}
+
+function detectMode(url: string): ServerMode {
+  if (url.match(/^https?:\/\/100\./)) return 'tailscale';
+  if (url.match(/^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/)) return 'local';
+  return 'custom';
+}
 
 export default function SettingsScreen() {
   const [serverUrl, setServerUrl] = useState('');
-  const [savedUrl, setSavedUrl] = useState('');
   const [serverMode, setServerMode] = useState<ServerMode>('tailscale');
-  const [tailscaleIp, setTailscaleIp] = useState('');
+  const [hostInput, setHostInput] = useState('');
+  const [customUrl, setCustomUrl] = useState('');
   const [testing, setTesting] = useState(false);
-  const [serverStatus, setServerStatus] = useState<'unknown' | 'online' | 'offline'>('unknown');
+  const [serverStatus, setServerStatus] = useState<ServerStatus>('unknown');
+  const [engineText, setEngineText] = useState('Not checked');
 
   useEffect(() => {
     loadSettings();
@@ -32,64 +44,77 @@ export default function SettingsScreen() {
   async function loadSettings() {
     const url = await getSliceServerUrl();
     setServerUrl(url);
-    setSavedUrl(url);
-
-    // Detect current mode from saved URL
-    if (!url || url === LOCAL_URL) {
-      setServerMode('local');
-    } else if (url.match(/^https?:\/\/100\./)) {
-      setServerMode('tailscale');
-      // Extract IP from URL
-      const match = url.match(/\/\/([\d.]+)/);
-      if (match) setTailscaleIp(match[1]);
-    } else {
-      setServerMode('custom');
+    if (url) {
+      const mode = detectMode(url);
+      setServerMode(mode);
+      if (mode === 'custom') setCustomUrl(url);
+      else setHostInput(hostFromUrl(url));
+      testUrl(url);
     }
-
-    if (url) testUrl(url);
-  }
-
-  async function selectMode(mode: ServerMode) {
-    setServerMode(mode);
-    if (mode === 'local') {
-      setServerUrl(LOCAL_URL);
-      await setSliceServerUrl(LOCAL_URL);
-      setSavedUrl(LOCAL_URL);
-      testUrl(LOCAL_URL);
-    }
-    // For tailscale and custom, user needs to enter IP/URL and save
-  }
-
-  async function saveTailscaleIp() {
-    const ip = tailscaleIp.trim();
-    if (!ip) return;
-    const url = `http://${ip}:4000`;
-    setServerUrl(url);
-    await setSliceServerUrl(url);
-    setSavedUrl(url);
-    testUrl(url);
   }
 
   async function testUrl(url: string) {
+    if (!url) return;
     setTesting(true);
     setServerStatus('unknown');
     try {
-      const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
-      setServerStatus(response.ok ? 'online' : 'offline');
+      const response = await fetch(`${url.replace(/\/$/, '')}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error('Bridge did not return OK');
+      const data = await response.json();
+      setServerStatus('online');
+      setEngineText(
+        data.engine?.available
+          ? `${data.engine.name} ready`
+          : data.engine?.note || 'Slicer engine not ready',
+      );
     } catch {
       setServerStatus('offline');
+      setEngineText('Bridge unreachable');
+    } finally {
+      setTesting(false);
     }
-    setTesting(false);
   }
 
-  async function saveCustomUrl() {
-    let url = serverUrl.trim();
-    if (url.endsWith('/')) url = url.slice(0, -1);
+  async function saveBridgeUrl() {
+    let url = '';
+    if (serverMode === 'custom') {
+      url = customUrl.trim();
+    } else {
+      const host = hostInput.trim();
+      if (!host) return;
+      url = `http://${host}:${DEFAULT_PORT}`;
+    }
+    url = url.replace(/\/$/, '');
     setServerUrl(url);
     await setSliceServerUrl(url);
-    setSavedUrl(url);
     testUrl(url);
   }
+
+  const modeCopy = {
+    tailscale: {
+      icon: 'globe',
+      title: 'Tailscale',
+      desc: 'Anywhere',
+      placeholder: '100.x.x.x',
+      help: 'Use the Tailscale IP shown by tailscale ip -4 on your Mac or Ubuntu bridge.',
+    },
+    local: {
+      icon: 'wifi',
+      title: 'Local Wi-Fi',
+      desc: 'Same network',
+      placeholder: '192.168.1.50',
+      help: 'Use your bridge computer LAN IP when your iPhone is on the same Wi-Fi.',
+    },
+    custom: {
+      icon: 'link',
+      title: 'Custom',
+      desc: 'HTTPS or tunnel',
+      placeholder: 'https://bridge.example.com',
+      help: 'Use this for a reverse proxy, hosted tunnel, or advanced VPN DNS name.',
+    },
+  };
 
   return (
     <View style={styles.container}>
@@ -98,156 +123,110 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Server Mode */}
-        <Text style={styles.sectionTitle}>Slicer Server</Text>
+        <Text style={styles.sectionTitle}>Bridge</Text>
 
-        {/* Status indicator */}
         <View style={styles.statusBar}>
           {testing ? (
             <ActivityIndicator size="small" color={COLORS.primary} />
           ) : (
-            <View style={[styles.statusDot, {
-              backgroundColor: serverStatus === 'online' ? '#34C759' :
-                             serverStatus === 'offline' ? '#FF3B30' : COLORS.textMuted
-            }]} />
+            <View
+              style={[
+                styles.statusDot,
+                {
+                  backgroundColor:
+                    serverStatus === 'online'
+                      ? COLORS.success
+                      : serverStatus === 'offline'
+                        ? COLORS.error
+                        : COLORS.textMuted,
+                },
+              ]}
+            />
           )}
-          <Text style={styles.statusText}>
-            {testing ? 'Testing connection...' :
-             serverStatus === 'online' ? 'Server connected' :
-             serverStatus === 'offline' ? 'Server unreachable' :
-             'Auto-detect on slice'}
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.statusText}>
+              {testing
+                ? 'Testing bridge...'
+                : serverStatus === 'online'
+                  ? 'Bridge connected'
+                  : serverStatus === 'offline'
+                    ? 'Bridge unreachable'
+                    : 'Bridge not checked'}
+            </Text>
+            <Text style={styles.statusSubtext}>{engineText}</Text>
+          </View>
         </View>
 
-        {/* Mode cards */}
         <View style={styles.modesContainer}>
-          <ModeCard
-            icon="globe"
-            title="Tailscale"
-            desc="Works from anywhere"
-            selected={serverMode === 'tailscale'}
-            onPress={() => selectMode('tailscale')}
-          />
-          <ModeCard
-            icon="desktop"
-            title="Local"
-            desc="Same WiFi only"
-            selected={serverMode === 'local'}
-            onPress={() => selectMode('local')}
-          />
-          <ModeCard
-            icon="create"
-            title="Custom URL"
-            desc="Cloud or other server"
-            selected={serverMode === 'custom'}
-            onPress={() => selectMode('custom')}
-          />
+          {(Object.keys(modeCopy) as ServerMode[]).map((mode) => (
+            <ModeCard
+              key={mode}
+              icon={modeCopy[mode].icon}
+              title={modeCopy[mode].title}
+              desc={modeCopy[mode].desc}
+              selected={serverMode === mode}
+              onPress={() => setServerMode(mode)}
+            />
+          ))}
         </View>
 
-        {/* Tailscale IP input */}
-        {serverMode === 'tailscale' && (
-          <View style={styles.card}>
-            <Text style={styles.cardDescription}>
-              Enter your server's Tailscale IP. You can find it by running
-              {' '}<Text style={{ fontFamily: 'Courier', color: COLORS.primary }}>tailscale ip -4</Text>{' '}
-              on the machine running BambuSlicer Server.
-            </Text>
-            <TextInput
-              style={styles.input}
-              placeholder="100.x.x.x"
-              placeholderTextColor={COLORS.textMuted}
-              value={tailscaleIp}
-              onChangeText={setTailscaleIp}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="decimal-pad"
-            />
-            <View style={styles.cardActions}>
-              <TouchableOpacity style={styles.testBtn} onPress={() => testUrl(`http://${tailscaleIp.trim()}:4000`)}>
-                <Ionicons name="pulse" size={18} color={COLORS.secondary} />
-                <Text style={styles.testBtnText}>Test</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveBtn, !tailscaleIp.trim() && { opacity: 0.5 }]}
-                onPress={saveTailscaleIp}
-                disabled={!tailscaleIp.trim()}
-              >
-                <Text style={styles.saveBtnText}>Save</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.card}>
+          <Text style={styles.cardDescription}>{modeCopy[serverMode].help}</Text>
+          <TextInput
+            style={styles.input}
+            placeholder={modeCopy[serverMode].placeholder}
+            placeholderTextColor={COLORS.textMuted}
+            value={serverMode === 'custom' ? customUrl : hostInput}
+            onChangeText={serverMode === 'custom' ? setCustomUrl : setHostInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType={serverMode === 'custom' ? 'url' : 'numbers-and-punctuation'}
+          />
+          <View style={styles.cardActions}>
+            <TouchableOpacity
+              style={styles.testBtn}
+              onPress={() => testUrl(serverMode === 'custom' ? customUrl : `http://${hostInput}:${DEFAULT_PORT}`)}
+            >
+              <Ionicons name="pulse" size={18} color={COLORS.secondary} />
+              <Text style={styles.testBtnText}>Test</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.saveBtn} onPress={saveBridgeUrl}>
+              <Text style={styles.saveBtnText}>Save</Text>
+            </TouchableOpacity>
           </View>
-        )}
+          {!!serverUrl && <Text style={styles.savedUrl}>{serverUrl}</Text>}
+        </View>
 
-        {/* Custom URL input */}
-        {serverMode === 'custom' && (
-          <View style={styles.card}>
-            <Text style={styles.cardDescription}>
-              Enter the full URL of your slicer server.
-            </Text>
-            <TextInput
-              style={styles.input}
-              placeholder="https://your-server.com:4000"
-              placeholderTextColor={COLORS.textMuted}
-              value={serverUrl}
-              onChangeText={setServerUrl}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-            />
-            <View style={styles.cardActions}>
-              <TouchableOpacity style={styles.testBtn} onPress={() => testUrl(serverUrl)}>
-                <Ionicons name="pulse" size={18} color={COLORS.secondary} />
-                <Text style={styles.testBtnText}>Test</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveBtn, serverUrl === savedUrl && { opacity: 0.5 }]}
-                onPress={saveCustomUrl}
-                disabled={serverUrl === savedUrl}
-              >
-                <Text style={styles.saveBtnText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Setup Guide */}
         <Text style={styles.sectionTitle}>Setup</Text>
         <View style={styles.card}>
-          <Text style={styles.stepTitle}>1. Install the server (one command)</Text>
+          <Text style={styles.stepTitle}>1. Install the bridge</Text>
           <View style={styles.codeBlock}>
             <Text style={styles.codeText} selectable>
               curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
             </Text>
           </View>
           <Text style={styles.cardDescription}>
-            Runs on any Mac, Linux, Jetson, or Raspberry Pi. Installs Node.js, CuraEngine, and sets up as a background service.
+            Run this on the Mac, Ubuntu box, mini PC, or laptop that stays on near your Bambu printer.
           </Text>
 
-          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>
-            2. Install Tailscale (free)
-          </Text>
+          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>2. Connect Tailscale</Text>
           <Text style={styles.cardDescription}>
-            Install on your server + phone from tailscale.com.{'\n'}
-            Then run: <Text style={{ fontFamily: 'Courier', color: COLORS.primary }}>tailscale ip -4</Text> to get the IP.
+            Sign into the same Tailscale account on the bridge and your iPhone, then paste the bridge IP above.
           </Text>
 
-          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Enter the IP above</Text>
+          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Add your printer</Text>
           <Text style={styles.cardDescription}>
-            Paste the Tailscale IP into the field above. Done — slice from anywhere.
+            Add the printer from the Printers tab. The bridge keeps the serial number and LAN access code, then sends prints over your home network.
           </Text>
         </View>
 
-        {/* Bambu Cloud Printing */}
-        <Text style={styles.sectionTitle}>Printer Connection</Text>
+        <Text style={styles.sectionTitle}>Remote Printing</Text>
         <View style={styles.card}>
           <Text style={styles.cardDescription}>
-            Prints are sent to your Bambu printer via Bambu Cloud — no need to
-            be on the same network as the printer. Just log in with your Bambu
-            Lab account in the Printers tab.
+            Your iPhone only needs to reach the bridge. The bridge must be on the same LAN or VPN route as the printer, so Tailscale works on cellular, other Wi-Fi, and travel networks.
           </Text>
         </View>
 
-        {/* About */}
         <Text style={styles.sectionTitle}>About</Text>
         <View style={styles.card}>
           <View style={styles.aboutRow}>
@@ -255,11 +234,11 @@ export default function SettingsScreen() {
             <Text style={styles.aboutValue}>2.0.0</Text>
           </View>
           <View style={styles.aboutRow}>
-            <Text style={styles.aboutLabel}>Supported Printers</Text>
-            <Text style={styles.aboutValue}>Bambu Lab P1S, P1P, X1C, A1</Text>
+            <Text style={styles.aboutLabel}>Printers</Text>
+            <Text style={styles.aboutValue}>P1S, P1P, X1C, A1, A1 mini</Text>
           </View>
           <View style={styles.aboutRow}>
-            <Text style={styles.aboutLabel}>Supported Files</Text>
+            <Text style={styles.aboutLabel}>Files</Text>
             <Text style={styles.aboutValue}>STL, 3MF</Text>
           </View>
         </View>
@@ -269,8 +248,6 @@ export default function SettingsScreen() {
     </View>
   );
 }
-
-// MARK: - Mode Card Component
 
 function ModeCard({
   icon,
@@ -329,7 +306,12 @@ const styles = StyleSheet.create({
   },
   statusText: {
     ...FONTS.small,
-    color: COLORS.textMuted,
+    color: COLORS.text,
+    fontWeight: '700',
+  },
+  statusSubtext: {
+    ...FONTS.small,
+    marginTop: 2,
   },
   modesContainer: {
     flexDirection: 'row',
@@ -408,6 +390,11 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
   },
   saveBtnText: { color: COLORS.bg, fontWeight: '700', fontSize: 14 },
+  savedUrl: {
+    ...FONTS.small,
+    color: COLORS.primary,
+    marginTop: SPACING.sm,
+  },
   aboutRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

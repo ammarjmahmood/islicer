@@ -9,73 +9,106 @@ import {
   TextInput,
   Modal,
 } from 'react-native';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS } from '../constants/theme';
 import { PrinterConfig } from '../types';
-import { getPrinters, savePrinter, removePrinter } from '../services/storage';
-import { getSliceJobs } from '../services/storage';
-import { sendPrintDirect } from '../services/bambu';
+import { getPrinters, getSliceJobs, removePrinter, savePrinter } from '../services/storage';
+import {
+  getBridgePrinters,
+  removeBridgePrinter,
+  saveBridgePrinter,
+  sendPrint,
+  testBridgePrinter,
+} from '../services/bambu';
+
+const MODELS: PrinterConfig['model'][] = ['P1S', 'A1Mini', 'A1', 'P1P', 'X1C'];
 
 export default function PrintersScreen() {
-  const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const gcodeJobId = route.params?.gcodeJobId;
 
   const [printers, setPrinters] = useState<PrinterConfig[]>([]);
   const [showAdd, setShowAdd] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [newPrinter, setNewPrinter] = useState({
     name: '',
     ip: '',
     accessCode: '',
     serialNumber: '',
+    model: 'P1S' as PrinterConfig['model'],
   });
 
   useFocusEffect(
     useCallback(() => {
       loadPrinters();
-    }, [])
+    }, []),
   );
 
   async function loadPrinters() {
-    const p = await getPrinters();
-    setPrinters(p);
+    setSyncing(true);
+    try {
+      const remotePrinters = await getBridgePrinters();
+      setPrinters(remotePrinters);
+      for (const printer of remotePrinters) {
+        await savePrinter(printer);
+      }
+    } catch {
+      const cachedPrinters = await getPrinters();
+      setPrinters(cachedPrinters);
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function addPrinter() {
-    if (!newPrinter.name || !newPrinter.ip || !newPrinter.accessCode) {
-      Alert.alert('Missing Info', 'Please fill in name, IP, and access code.');
+    if (!newPrinter.name || !newPrinter.ip || !newPrinter.serialNumber || !newPrinter.accessCode) {
+      Alert.alert('Missing Info', 'Please fill in name, IP, serial number, and LAN access code.');
       return;
     }
 
-    const printer: PrinterConfig = {
-      id: `printer_${Date.now()}`,
-      name: newPrinter.name,
-      ip: newPrinter.ip,
-      accessCode: newPrinter.accessCode,
-      serialNumber: newPrinter.serialNumber,
-      model: 'P1S',
-      isOnline: false,
-    };
+    try {
+      const printer = await saveBridgePrinter({
+        name: newPrinter.name.trim(),
+        ip: newPrinter.ip.trim(),
+        serialNumber: newPrinter.serialNumber.trim(),
+        accessCode: newPrinter.accessCode.trim(),
+        model: newPrinter.model,
+      });
 
-    await savePrinter(printer);
-    await loadPrinters();
-    setShowAdd(false);
-    setNewPrinter({ name: '', ip: '', accessCode: '', serialNumber: '' });
+      await savePrinter(printer);
+      await loadPrinters();
+      setShowAdd(false);
+      setNewPrinter({ name: '', ip: '', accessCode: '', serialNumber: '', model: 'P1S' });
+    } catch (err: any) {
+      Alert.alert('Add Printer Failed', err.message);
+    }
   }
 
   async function deletePrinter(printer: PrinterConfig) {
-    Alert.alert('Remove Printer', `Remove "${printer.name}"?`, [
+    Alert.alert('Remove Printer', `Remove "${printer.name}" from the bridge?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
         style: 'destructive',
         onPress: async () => {
+          try {
+            await removeBridgePrinter(printer.id);
+          } catch {}
           await removePrinter(printer.id);
-          await loadPrinters();
+          setPrinters((current) => current.filter((p) => p.id !== printer.id));
         },
       },
     ]);
+  }
+
+  async function testPrinter(printer: PrinterConfig) {
+    try {
+      await testBridgePrinter(printer.id);
+      Alert.alert('Printer Reached', `${printer.name} answered through the bridge.`);
+    } catch (err: any) {
+      Alert.alert('Printer Test Failed', err.message);
+    }
   }
 
   async function sendToPrinter(printer: PrinterConfig) {
@@ -87,8 +120,8 @@ export default function PrintersScreen() {
     try {
       const jobs = await getSliceJobs();
       const job = jobs.find((j) => j.id === gcodeJobId);
-      if (!job?.gcodeUri) {
-        Alert.alert('Error', 'G-code file not found.');
+      if (!job?.serverJobId) {
+        Alert.alert('Error', 'Bridge slice job not found. Re-slice the model and try again.');
         return;
       }
 
@@ -101,7 +134,7 @@ export default function PrintersScreen() {
             text: 'Send',
             onPress: async () => {
               try {
-                await sendPrintDirect(printer, job.gcodeUri!, job.modelName);
+                await sendPrint(printer, job);
                 Alert.alert('Sent!', `Print job sent to ${printer.name}.`);
               } catch (err: any) {
                 Alert.alert('Send Failed', err.message);
@@ -119,7 +152,7 @@ export default function PrintersScreen() {
     return (
       <TouchableOpacity
         style={styles.printerCard}
-        onPress={() => (gcodeJobId ? sendToPrinter(item) : null)}
+        onPress={() => (gcodeJobId ? sendToPrinter(item) : testPrinter(item))}
         onLongPress={() => deletePrinter(item)}
       >
         <View style={styles.printerIcon}>
@@ -128,10 +161,12 @@ export default function PrintersScreen() {
         <View style={styles.printerInfo}>
           <Text style={styles.printerName}>{item.name}</Text>
           <Text style={styles.printerMeta}>
-            {item.model} · {item.ip}
+            {item.model === 'A1Mini' ? 'A1 mini' : item.model} · {item.ip} · bridge
           </Text>
         </View>
-        <View style={[styles.statusDot, { backgroundColor: item.isOnline ? COLORS.success : COLORS.textMuted }]} />
+        <View style={styles.testIcon}>
+          <Ionicons name="pulse" size={18} color={COLORS.textMuted} />
+        </View>
       </TouchableOpacity>
     );
   }
@@ -141,14 +176,18 @@ export default function PrintersScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Printers</Text>
         <Text style={styles.subtitle}>
-          {gcodeJobId ? 'Select a printer to send G-code' : `${printers.length} configured`}
+          {syncing
+            ? 'Syncing with bridge...'
+            : gcodeJobId
+              ? 'Select a printer to send G-code'
+              : `${printers.length} configured on bridge`}
         </Text>
       </View>
 
       {gcodeJobId && (
         <View style={styles.banner}>
           <Ionicons name="information-circle" size={18} color={COLORS.primary} />
-          <Text style={styles.bannerText}>Tap a printer to send your sliced model</Text>
+          <Text style={styles.bannerText}>Tap a printer to send through your Mac or Ubuntu bridge</Text>
         </View>
       )}
 
@@ -157,7 +196,7 @@ export default function PrintersScreen() {
           <Ionicons name="print-outline" size={64} color={COLORS.textMuted} />
           <Text style={styles.emptyTitle}>No printers</Text>
           <Text style={styles.emptyText}>
-            Add your Bambu Lab printer to start printing
+            Add your Bambu printer to the bridge to start printing
           </Text>
         </View>
       ) : (
@@ -182,47 +221,71 @@ export default function PrintersScreen() {
           <View style={styles.modal}>
             <Text style={styles.modalTitle}>Add Printer</Text>
             <Text style={styles.modalSubtitle}>
-              Find your access code in the printer's network settings
+              Credentials stay on the bridge. Find the LAN access code in the printer network settings.
             </Text>
 
             <TextInput
               style={styles.input}
-              placeholder="Printer Name (e.g., My P1S)"
+              placeholder="Printer Name (e.g., Workshop P1S)"
               placeholderTextColor={COLORS.textMuted}
               value={newPrinter.name}
               onChangeText={(t) => setNewPrinter((p) => ({ ...p, name: t }))}
             />
             <TextInput
               style={styles.input}
-              placeholder="IP Address (e.g., 192.168.1.100)"
+              placeholder="Printer IP (e.g., 192.168.1.100)"
               placeholderTextColor={COLORS.textMuted}
               value={newPrinter.ip}
               onChangeText={(t) => setNewPrinter((p) => ({ ...p, ip: t }))}
-              keyboardType="numeric"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Access Code (8 digits)"
-              placeholderTextColor={COLORS.textMuted}
-              value={newPrinter.accessCode}
-              onChangeText={(t) => setNewPrinter((p) => ({ ...p, accessCode: t }))}
+              keyboardType="numbers-and-punctuation"
               autoCapitalize="none"
             />
             <TextInput
               style={styles.input}
-              placeholder="Serial Number (optional)"
+              placeholder="Serial Number"
               placeholderTextColor={COLORS.textMuted}
               value={newPrinter.serialNumber}
               onChangeText={(t) => setNewPrinter((p) => ({ ...p, serialNumber: t }))}
               autoCapitalize="none"
             />
+            <TextInput
+              style={styles.input}
+              placeholder="LAN Access Code"
+              placeholderTextColor={COLORS.textMuted}
+              value={newPrinter.accessCode}
+              onChangeText={(t) => setNewPrinter((p) => ({ ...p, accessCode: t }))}
+              autoCapitalize="none"
+              secureTextEntry
+            />
+
+            <View style={styles.modelPicker}>
+              {MODELS.map((model) => (
+                <TouchableOpacity
+                  key={model}
+                  style={[
+                    styles.modelChip,
+                    newPrinter.model === model && styles.modelChipActive,
+                  ]}
+                  onPress={() => setNewPrinter((p) => ({ ...p, model }))}
+                >
+                  <Text
+                    style={[
+                      styles.modelChipText,
+                      newPrinter.model === model && { color: COLORS.bg },
+                    ]}
+                  >
+                    {model === 'A1Mini' ? 'A1 mini' : model}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={styles.modalCancel}
                 onPress={() => {
                   setShowAdd(false);
-                  setNewPrinter({ name: '', ip: '', accessCode: '', serialNumber: '' });
+                  setNewPrinter({ name: '', ip: '', accessCode: '', serialNumber: '', model: 'P1S' });
                 }}
               >
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -253,7 +316,7 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
     marginBottom: SPACING.sm,
   },
-  bannerText: { ...FONTS.small, color: COLORS.primary },
+  bannerText: { ...FONTS.small, color: COLORS.primary, flex: 1 },
   list: { paddingHorizontal: SPACING.lg, paddingBottom: 120 },
   printerCard: {
     flexDirection: 'row',
@@ -277,7 +340,14 @@ const styles = StyleSheet.create({
   printerInfo: { flex: 1 },
   printerName: { ...FONTS.body, fontWeight: '600' },
   printerMeta: { ...FONTS.small, marginTop: 2 },
-  statusDot: { width: 10, height: 10, borderRadius: 5 },
+  testIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surfaceLight,
+  },
   empty: {
     flex: 1,
     alignItems: 'center',
@@ -326,6 +396,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     marginBottom: SPACING.sm,
+  },
+  modelPicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm,
+    marginTop: SPACING.xs,
+  },
+  modelChip: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modelChipActive: {
+    backgroundColor: COLORS.secondary,
+    borderColor: COLORS.secondary,
+  },
+  modelChipText: {
+    ...FONTS.small,
+    fontWeight: '700',
   },
   modalActions: {
     flexDirection: 'row',

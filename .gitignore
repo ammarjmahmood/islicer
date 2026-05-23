@@ -8,6 +8,7 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+build/
 
 # Native
 .kotlin/
@@ -32,6 +33,8 @@ yarn-error.*
 
 # local env files
 .env*.local
+.vercel/
+website/.vercel/
 
 # typescript
 *.tsbuildinfo
@@ -44,6 +47,7 @@ yarn-error.*
 server/node_modules/
 server/uploads/
 server/gcode/
+server/data/
 
 # macOS app builds
 server-app/.build/
