@@ -14,6 +14,7 @@ iPhone app
         v
 Mac / Ubuntu bridge
   stores printer LAN credentials
+  serves the printer setup page
   slices with CuraEngine
   uploads G-code to printer with FTPS
   starts print with MQTT
@@ -23,13 +24,14 @@ Bambu printer
   P1S, P1P, X1C, X1, A1, A1 mini
 ```
 
-The iPhone does not need to be on the same Wi-Fi as the printer. It only needs to reach the bridge. The bridge must be on the same LAN, VLAN, or VPN route as the printer.
+The iPhone does not need the printer LAN IP and does not need to be on the same Wi-Fi as the printer. It only needs to reach the bridge. The bridge must be at home with the printer, or it must have a VPN/subnet route back to the printer LAN.
 
 ## What Changed In This Build
 
 - The desktop service is now a real bridge API with `/health`, `/printers`, `/slice`, `/status/:jobId`, and `/print`.
 - Printer access codes are stored on the bridge in `server/data/config.json`.
-- The mobile app syncs printers from the bridge and sends print requests back to the bridge.
+- The bridge now serves `/setup` for printer LAN setup, so the iPhone only stores the bridge URL.
+- The mobile app syncs bridge printers and sends print requests back to the bridge.
 - Unsupported direct Bambu Cloud upload assumptions were removed from the app.
 - The server no longer creates placeholder G-code. If CuraEngine or its definitions are missing, slicing fails clearly.
 - A static website lives in `website/` with installation steps and a product demo reel.
@@ -44,7 +46,7 @@ Use the website download, or paste this one command on the Ubuntu/Mac computer t
 curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
 ```
 
-The bridge listens on port `8005`. The installer prints the exact URLs to paste into the iPhone app.
+The bridge listens on port `8005`. The installer prints the setup URL for the computer and the exact bridge URL to paste into the iPhone app.
 
 ### 2. Sign into Tailscale
 
@@ -61,9 +63,21 @@ http://100.x.x.x:8005
 
 Tailscale does not require a special iOS cellular app port. The bridge app uses TCP `8005`; Tailscale itself may use UDP `41641` for direct peer-to-peer tunnels when available.
 
-### 3. Add your printer once
+### 3. Add your printer once on the bridge
 
-In the app, open Printers and enter:
+Open the bridge setup page on the computer that can reach the printer:
+
+```text
+http://localhost:8005/setup
+```
+
+Or use the Tailscale/ LAN URL printed by the installer:
+
+```text
+http://100.x.x.x:8005/setup
+```
+
+Enter:
 
 - Name
 - Local printer IP
@@ -71,11 +85,11 @@ In the app, open Printers and enter:
 - Model
 - LAN access code
 
-The printer credentials stay on the bridge computer.
+The printer credentials stay on the bridge computer. The iPhone app does not ask for the printer IP or LAN access code.
 
 ### 4. Print from anywhere
 
-Open Files, import or download an STL/3MF, slice it, and tap Send to Printer.
+Open Files, import or download an STL/3MF, slice it, and tap Send to Printer. The phone sends the model to the bridge; the bridge slices and talks to the printer.
 
 ## Build The iOS App
 
@@ -146,6 +160,7 @@ The site is plain HTML/CSS/JS and can be hosted on GitHub Pages, Netlify, Vercel
 ```text
 GET    /health
 GET    /printers
+GET    /setup
 POST   /printers
 DELETE /printers/:id
 POST   /printers/:id/test
@@ -162,6 +177,11 @@ Recommended path:
 - Tailscale on bridge and iPhone.
 - Bridge exposes `http://100.x.x.x:8005`.
 - Printer remains private on the home LAN.
+- Printer LAN details are entered at `http://localhost:8005/setup` on the bridge machine.
+
+Laptop note:
+
+- If the bridge MacBook is in a backpack, at work, or otherwise away from home, it cannot reach the home printer by magic. It needs a VPN path back home, such as a Tailscale subnet router on an always-on home device. The simpler setup is to run the bridge on a small always-on computer at home.
 
 Also supported:
 

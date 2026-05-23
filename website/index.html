@@ -109,7 +109,7 @@
           <p class="eyebrow">Download</p>
           <h2 id="download-title">Install the bridge app</h2>
           <p>
-            No rented server, no cloud account, no network plumbing. Install this on the computer that stays on near the printer, then paste its Tailscale IP into the iPhone app.
+            No rented server and no exposed printer port. Install this on the computer that stays on near the printer, add the printer in the bridge setup page, then paste the bridge Tailscale IP into the iPhone app.
           </p>
         </div>
         <div class="download-grid">
@@ -139,7 +139,7 @@
           <p class="eyebrow">One command</p>
           <h2 id="install-title">The simple setup</h2>
           <p>
-            Most users only need this flow: install the bridge, sign into Tailscale, paste the IP in the iPhone app, add printer.
+            Most users only need this flow: install the bridge at home, add the printer on the bridge setup page, sign into Tailscale, paste the bridge IP in the iPhone app.
           </p>
         </div>
 
@@ -153,7 +153,8 @@
           <ol>
             <li>Open Terminal on your Ubuntu box.</li>
             <li>Paste this one command.</li>
-            <li>The installer prints the Tailscale bridge URL on port 8005.</li>
+            <li>Open the printed setup page and add your printer.</li>
+            <li>The installer also prints the Tailscale bridge URL on port 8005 for iPhone Settings.</li>
           </ol>
           <pre><code>curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
 sudo tailscale up
@@ -163,8 +164,8 @@ tailscale ip -4</code></pre>
         <div class="install-panel hidden" data-panel="mac">
           <ol>
             <li>Download the Mac bridge from this page.</li>
-            <li>Launch it from the menu bar.</li>
-            <li>Paste the Tailscale IP in iOS Settings.</li>
+            <li>Launch it and open the bridge setup page.</li>
+            <li>Add the printer on the Mac, then paste the Tailscale IP in iOS Settings.</li>
           </ol>
           <pre><code>Bridge URL format:
 http://100.x.x.x:8005</code></pre>
@@ -174,7 +175,7 @@ http://100.x.x.x:8005</code></pre>
           <ol>
             <li>Build the bridge container on the always-on machine.</li>
             <li>Expose port 8005 to Tailscale or your LAN.</li>
-            <li>Add printers from the iOS app.</li>
+            <li>Add printers from the bridge setup page.</li>
           </ol>
           <pre><code>docker build -t islicer-bridge ./server
 docker run -d --name islicer -p 8005:8005 --restart unless-stopped islicer-bridge</code></pre>
@@ -204,7 +205,7 @@ npx expo run:ios</code></pre>
           <article>
             <span>3</span>
             <h3>Connect bridge</h3>
-            <p>Open Settings, choose Tailscale, paste the bridge IP, then tap Test.</p>
+            <p>Open Settings, choose Tailscale, paste the bridge IP, then tap Test. Printers appear after they are added on the bridge.</p>
           </article>
         </div>
       </section>
@@ -215,6 +216,9 @@ npx expo run:ios</code></pre>
           <h2 id="remote-title">Works off-network without exposing your printer</h2>
           <p>
             Tailscale gives your phone a private route to the bridge. The printer stays private at home, and the bridge is the only machine that needs printer LAN access. The bridge listens on TCP port 8005; Tailscale itself uses UDP 41641 for direct peer-to-peer tunnels when available.
+          </p>
+          <p>
+            If your bridge MacBook is at work or in your backpack, it can only print to the home printer when it has a VPN or subnet route back to the home LAN. The simplest setup is an always-on bridge at home.
           </p>
         </div>
         <div class="route-map" aria-label="Remote route">
@@ -243,7 +247,7 @@ npx expo run:ios</code></pre>
           </article>
           <article>
             <h3>Credentials stay home</h3>
-            <p>LAN access codes are stored in the bridge config, not passed to public cloud services.</p>
+            <p>LAN access codes and printer IPs are entered on the bridge setup page and stored in the bridge config, not in the iPhone app.</p>
           </article>
           <article>
             <h3>Remote path is explicit</h3>

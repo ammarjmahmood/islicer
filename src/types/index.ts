@@ -1,10 +1,10 @@
 export interface PrinterConfig {
   id: string;
   name: string;
-  ip: string;
+  ip?: string;
   accessCode?: string;
   hasAccessCode?: boolean;
-  serialNumber: string;
+  serialNumber?: string;
   model: 'P1S' | 'P1P' | 'X1C' | 'X1' | 'A1' | 'A1Mini';
   isOnline: boolean;
 }

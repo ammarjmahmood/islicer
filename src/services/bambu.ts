@@ -1,27 +1,9 @@
 import { PrinterConfig, SliceJob } from '../types';
 import { bridgeFetch } from './bridge';
 
-type PrinterInput = {
-  id?: string;
-  name: string;
-  ip: string;
-  accessCode: string;
-  serialNumber: string;
-  model: PrinterConfig['model'];
-};
-
 export async function getBridgePrinters(): Promise<PrinterConfig[]> {
   const data = await bridgeFetch<{ printers: PrinterConfig[] }>('/printers');
   return data.printers;
-}
-
-export async function saveBridgePrinter(printer: PrinterInput): Promise<PrinterConfig> {
-  const data = await bridgeFetch<{ printer: PrinterConfig }>('/printers', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(printer),
-  });
-  return data.printer;
 }
 
 export async function removeBridgePrinter(id: string): Promise<void> {

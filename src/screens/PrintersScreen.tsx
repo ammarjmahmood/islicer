@@ -6,8 +6,7 @@ import {
   FlatList,
   TouchableOpacity,
   Alert,
-  TextInput,
-  Modal,
+  Linking,
 } from 'react-native';
 import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,27 +16,17 @@ import { getPrinters, getSliceJobs, removePrinter, savePrinter } from '../servic
 import {
   getBridgePrinters,
   removeBridgePrinter,
-  saveBridgePrinter,
   sendPrint,
   testBridgePrinter,
 } from '../services/bambu';
-
-const MODELS: PrinterConfig['model'][] = ['P1S', 'A1Mini', 'A1', 'P1P', 'X1C'];
+import { resolveBridgeUrl } from '../services/bridge';
 
 export default function PrintersScreen() {
   const route = useRoute<any>();
   const gcodeJobId = route.params?.gcodeJobId;
 
   const [printers, setPrinters] = useState<PrinterConfig[]>([]);
-  const [showAdd, setShowAdd] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [newPrinter, setNewPrinter] = useState({
-    name: '',
-    ip: '',
-    accessCode: '',
-    serialNumber: '',
-    model: 'P1S' as PrinterConfig['model'],
-  });
 
   useFocusEffect(
     useCallback(() => {
@@ -61,27 +50,12 @@ export default function PrintersScreen() {
     }
   }
 
-  async function addPrinter() {
-    if (!newPrinter.name || !newPrinter.ip || !newPrinter.serialNumber || !newPrinter.accessCode) {
-      Alert.alert('Missing Info', 'Please fill in name, IP, serial number, and LAN access code.');
-      return;
-    }
-
+  async function openBridgeSetup() {
     try {
-      const printer = await saveBridgePrinter({
-        name: newPrinter.name.trim(),
-        ip: newPrinter.ip.trim(),
-        serialNumber: newPrinter.serialNumber.trim(),
-        accessCode: newPrinter.accessCode.trim(),
-        model: newPrinter.model,
-      });
-
-      await savePrinter(printer);
-      await loadPrinters();
-      setShowAdd(false);
-      setNewPrinter({ name: '', ip: '', accessCode: '', serialNumber: '', model: 'P1S' });
+      const bridgeUrl = await resolveBridgeUrl();
+      await Linking.openURL(`${bridgeUrl}/setup`);
     } catch (err: any) {
-      Alert.alert('Add Printer Failed', err.message);
+      Alert.alert('Bridge Not Ready', err.message);
     }
   }
 
@@ -161,11 +135,11 @@ export default function PrintersScreen() {
         <View style={styles.printerInfo}>
           <Text style={styles.printerName}>{item.name}</Text>
           <Text style={styles.printerMeta}>
-            {item.model === 'A1Mini' ? 'A1 mini' : item.model} · {item.ip} · bridge
+            {item.model === 'A1Mini' ? 'A1 mini' : item.model} · configured on bridge
           </Text>
         </View>
         <View style={styles.testIcon}>
-          <Ionicons name="pulse" size={18} color={COLORS.textMuted} />
+          <Ionicons name={gcodeJobId ? 'paper-plane' : 'pulse'} size={18} color={COLORS.textMuted} />
         </View>
       </TouchableOpacity>
     );
@@ -179,24 +153,31 @@ export default function PrintersScreen() {
           {syncing
             ? 'Syncing with bridge...'
             : gcodeJobId
-              ? 'Select a printer to send G-code'
-              : `${printers.length} configured on bridge`}
+              ? 'Select a bridge printer'
+              : `${printers.length} available from bridge`}
+        </Text>
+      </View>
+
+      <View style={styles.infoCard}>
+        <Ionicons name="home" size={20} color={COLORS.primary} />
+        <Text style={styles.infoText}>
+          Printer LAN details live on the bridge computer. Your iPhone only connects to the bridge.
         </Text>
       </View>
 
       {gcodeJobId && (
         <View style={styles.banner}>
           <Ionicons name="information-circle" size={18} color={COLORS.primary} />
-          <Text style={styles.bannerText}>Tap a printer to send through your Mac or Ubuntu bridge</Text>
+          <Text style={styles.bannerText}>Tap a printer to send through the bridge</Text>
         </View>
       )}
 
       {printers.length === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="print-outline" size={64} color={COLORS.textMuted} />
-          <Text style={styles.emptyTitle}>No printers</Text>
+          <Text style={styles.emptyTitle}>No bridge printers</Text>
           <Text style={styles.emptyText}>
-            Add your Bambu printer to the bridge to start printing
+            Add your Bambu printer from the bridge setup page, then refresh here.
           </Text>
         </View>
       ) : (
@@ -210,93 +191,15 @@ export default function PrintersScreen() {
       )}
 
       <View style={styles.bottomBar}>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setShowAdd(true)}>
-          <Ionicons name="add" size={22} color={COLORS.bg} />
-          <Text style={styles.addBtnText}>Add Printer</Text>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={loadPrinters}>
+          <Ionicons name="refresh" size={20} color={COLORS.secondary} />
+          <Text style={styles.secondaryBtnText}>Refresh</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.setupBtn} onPress={openBridgeSetup}>
+          <Ionicons name="settings" size={20} color={COLORS.bg} />
+          <Text style={styles.setupBtnText}>Bridge Setup</Text>
         </TouchableOpacity>
       </View>
-
-      <Modal visible={showAdd} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Add Printer</Text>
-            <Text style={styles.modalSubtitle}>
-              Credentials stay on the bridge. Find the LAN access code in the printer network settings.
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Printer Name (e.g., Workshop P1S)"
-              placeholderTextColor={COLORS.textMuted}
-              value={newPrinter.name}
-              onChangeText={(t) => setNewPrinter((p) => ({ ...p, name: t }))}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Printer IP (e.g., 192.168.1.100)"
-              placeholderTextColor={COLORS.textMuted}
-              value={newPrinter.ip}
-              onChangeText={(t) => setNewPrinter((p) => ({ ...p, ip: t }))}
-              keyboardType="numbers-and-punctuation"
-              autoCapitalize="none"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Serial Number"
-              placeholderTextColor={COLORS.textMuted}
-              value={newPrinter.serialNumber}
-              onChangeText={(t) => setNewPrinter((p) => ({ ...p, serialNumber: t }))}
-              autoCapitalize="none"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="LAN Access Code"
-              placeholderTextColor={COLORS.textMuted}
-              value={newPrinter.accessCode}
-              onChangeText={(t) => setNewPrinter((p) => ({ ...p, accessCode: t }))}
-              autoCapitalize="none"
-              secureTextEntry
-            />
-
-            <View style={styles.modelPicker}>
-              {MODELS.map((model) => (
-                <TouchableOpacity
-                  key={model}
-                  style={[
-                    styles.modelChip,
-                    newPrinter.model === model && styles.modelChipActive,
-                  ]}
-                  onPress={() => setNewPrinter((p) => ({ ...p, model }))}
-                >
-                  <Text
-                    style={[
-                      styles.modelChipText,
-                      newPrinter.model === model && { color: COLORS.bg },
-                    ]}
-                  >
-                    {model === 'A1Mini' ? 'A1 mini' : model}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.modalCancel}
-                onPress={() => {
-                  setShowAdd(false);
-                  setNewPrinter({ name: '', ip: '', accessCode: '', serialNumber: '', model: 'P1S' });
-                }}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={addPrinter}>
-                <Text style={styles.modalConfirmText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -306,6 +209,19 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: SPACING.lg, paddingTop: 60, paddingBottom: SPACING.md },
   title: { ...FONTS.title },
   subtitle: { ...FONTS.small, marginTop: SPACING.xs },
+  infoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: SPACING.sm,
+  },
+  infoText: { ...FONTS.small, color: COLORS.textSecondary, flex: 1 },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -353,6 +269,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingBottom: 100,
+    paddingHorizontal: SPACING.xl,
   },
   emptyTitle: { ...FONTS.heading, fontSize: 20, marginTop: SPACING.md },
   emptyText: { ...FONTS.small, marginTop: SPACING.xs, textAlign: 'center' },
@@ -361,8 +278,24 @@ const styles = StyleSheet.create({
     bottom: 30,
     left: SPACING.lg,
     right: SPACING.lg,
+    flexDirection: 'row',
+    gap: SPACING.sm,
   },
-  addBtn: {
+  secondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    paddingVertical: 14,
+    gap: SPACING.sm,
+  },
+  secondaryBtnText: { fontWeight: '700', fontSize: 15, color: COLORS.secondary },
+  setupBtn: {
+    flex: 1.3,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -371,73 +304,5 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: SPACING.sm,
   },
-  addBtnText: { fontWeight: '700', fontSize: 15, color: COLORS.bg },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    paddingHorizontal: SPACING.lg,
-  },
-  modal: {
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  modalTitle: { ...FONTS.heading, fontSize: 20 },
-  modalSubtitle: { ...FONTS.small, marginTop: SPACING.xs, marginBottom: SPACING.md },
-  input: {
-    backgroundColor: COLORS.bg,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    color: COLORS.text,
-    fontSize: 15,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginBottom: SPACING.sm,
-  },
-  modelPicker: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SPACING.sm,
-    marginTop: SPACING.xs,
-  },
-  modelChip: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.bg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  modelChipActive: {
-    backgroundColor: COLORS.secondary,
-    borderColor: COLORS.secondary,
-  },
-  modelChipText: {
-    ...FONTS.small,
-    fontWeight: '700',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    marginTop: SPACING.md,
-    gap: SPACING.sm,
-  },
-  modalCancel: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.surfaceLight,
-  },
-  modalCancelText: { color: COLORS.textSecondary, fontWeight: '600' },
-  modalConfirm: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.secondary,
-  },
-  modalConfirmText: { color: COLORS.bg, fontWeight: '700' },
+  setupBtnText: { fontWeight: '700', fontSize: 15, color: COLORS.bg },
 });

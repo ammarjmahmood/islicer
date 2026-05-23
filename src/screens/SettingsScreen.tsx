@@ -105,7 +105,7 @@ export default function SettingsScreen() {
       title: 'Local Wi-Fi',
       desc: 'Same network',
       placeholder: '192.168.1.50',
-      help: 'Use your bridge computer LAN IP when your iPhone is on the same Wi-Fi.',
+      help: 'Use your bridge computer LAN IP, not the printer IP, when your iPhone is on the same Wi-Fi.',
     },
     custom: {
       icon: 'link',
@@ -206,7 +206,7 @@ export default function SettingsScreen() {
             </Text>
           </View>
           <Text style={styles.cardDescription}>
-            Run this on the Mac, Ubuntu box, mini PC, or laptop that stays on near your Bambu printer.
+            Run this on the Mac, Ubuntu box, mini PC, or laptop that stays on near your Bambu printer. If the bridge laptop leaves home, it needs a VPN route back to the printer LAN.
           </Text>
 
           <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>2. Connect Tailscale</Text>
@@ -216,14 +216,14 @@ export default function SettingsScreen() {
 
           <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Add your printer</Text>
           <Text style={styles.cardDescription}>
-            Add the printer from the Printers tab. The bridge keeps the serial number and LAN access code, then sends prints over your home network.
+            Open the bridge setup page on that computer and add the printer there. The iPhone never needs the printer LAN IP or access code.
           </Text>
         </View>
 
         <Text style={styles.sectionTitle}>Remote Printing</Text>
         <View style={styles.card}>
           <Text style={styles.cardDescription}>
-            Your iPhone only needs to reach the bridge. The bridge must be on the same LAN or VPN route as the printer, so Tailscale works on cellular, other Wi-Fi, and travel networks.
+            Your iPhone only needs to reach the bridge. The bridge must be at home with the printer or connected to your home LAN through VPN/subnet routing, so Tailscale works from cellular, work Wi-Fi, and travel networks.
           </Text>
         </View>
 

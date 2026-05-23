@@ -74,10 +74,19 @@ function writeConfig(config) {
   } catch {}
 }
 
-function publicPrinter(printer) {
+function publicPrinter(printer, options = {}) {
   const { accessCode, ...safe } = printer;
+
+  if (options.includeLan) {
+    return {
+      ...safe,
+      hasAccessCode: Boolean(accessCode),
+    };
+  }
+
+  const { ip, ftpPort, mqttPort, ...phoneSafe } = safe;
   return {
-    ...safe,
+    ...phoneSafe,
     hasAccessCode: Boolean(accessCode),
   };
 }
@@ -128,6 +137,299 @@ function getLocalAddresses() {
     }
   }
   return addresses;
+}
+
+function setupPageHtml() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>iSlicer Bridge Setup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #08110f;
+        --panel: #111a18;
+        --panel-2: #192421;
+        --line: #2f413c;
+        --text: #f6f3eb;
+        --muted: #a8b4af;
+        --green: #20d19f;
+        --red: #ff6b5f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      main {
+        width: min(1040px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+      header {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 28px;
+      }
+      h1, h2, p { margin-top: 0; letter-spacing: 0; }
+      h1 { font-size: clamp(34px, 6vw, 68px); line-height: 0.95; margin-bottom: 6px; }
+      h2 { font-size: 22px; margin-bottom: 14px; }
+      p, label, li { color: var(--muted); line-height: 1.55; }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+        gap: 18px;
+        align-items: start;
+      }
+      section, form {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 22px;
+      }
+      .status {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .stat {
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .stat span {
+        display: block;
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+      .stat strong { font-size: 15px; }
+      .printer-list {
+        display: grid;
+        gap: 10px;
+      }
+      .printer-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .printer-row small {
+        display: block;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .row-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 12px;
+        font-size: 13px;
+        font-weight: 800;
+      }
+      input, select {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #07100e;
+        color: var(--text);
+        border-radius: 8px;
+        min-height: 44px;
+        padding: 0 12px;
+        font: inherit;
+      }
+      button {
+        min-height: 42px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 0 14px;
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .primary { width: 100%; background: var(--green); color: #06110e; }
+      .secondary { background: transparent; color: var(--text); border-color: var(--line); }
+      .danger { background: transparent; color: var(--red); border-color: rgba(255, 107, 95, 0.45); }
+      .note {
+        border-left: 3px solid var(--green);
+        padding-left: 14px;
+        margin-bottom: 18px;
+      }
+      .message {
+        min-height: 22px;
+        margin-top: 12px;
+        color: var(--muted);
+      }
+      @media (max-width: 820px) {
+        .grid, .status { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>iSlicer Bridge Setup</h1>
+        <p>This is the desktop-side setup. Only the bridge needs printer LAN details. The iPhone only needs the bridge URL.</p>
+      </header>
+
+      <div class="status" id="status">
+        <div class="stat"><span>Bridge</span><strong>Checking...</strong></div>
+        <div class="stat"><span>Slicer</span><strong>Checking...</strong></div>
+        <div class="stat"><span>Printers</span><strong>Checking...</strong></div>
+      </div>
+
+      <div class="grid">
+        <section>
+          <h2>Configured printers</h2>
+          <p class="note">For easiest remote printing, run this bridge on a computer that stays at home with the printer. A laptop at work can only print home if it has a VPN or Tailscale subnet route back to the printer LAN.</p>
+          <div class="printer-list" id="printer-list"></div>
+        </section>
+
+        <form id="printer-form">
+          <h2>Add Bambu printer</h2>
+          <label>
+            Printer name
+            <input name="name" placeholder="Workshop P1S" required />
+          </label>
+          <label>
+            Model
+            <select name="model">
+              <option value="P1S">P1S</option>
+              <option value="P1P">P1P</option>
+              <option value="X1C">X1C</option>
+              <option value="X1">X1</option>
+              <option value="A1">A1</option>
+              <option value="A1Mini">A1 mini</option>
+            </select>
+          </label>
+          <label>
+            Printer LAN IP
+            <input name="ip" placeholder="192.168.1.100" inputmode="decimal" required />
+          </label>
+          <label>
+            Serial number
+            <input name="serialNumber" placeholder="Bambu serial number" required />
+          </label>
+          <label>
+            LAN access code
+            <input name="accessCode" placeholder="From printer network settings" type="password" required />
+          </label>
+          <button class="primary" type="submit">Save printer to bridge</button>
+          <p class="message" id="message"></p>
+        </form>
+      </div>
+    </main>
+
+    <script>
+      const list = document.getElementById('printer-list');
+      const message = document.getElementById('message');
+      const status = document.getElementById('status');
+      const form = document.getElementById('printer-form');
+
+      function escapeText(value) {
+        return String(value || '').replace(/[&<>"']/g, function (char) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char];
+        });
+      }
+
+      async function request(path, options) {
+        const response = await fetch(path, options);
+        const body = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(body.error || 'Request failed');
+        return body;
+      }
+
+      async function load() {
+        try {
+          const health = await request('/health');
+          status.innerHTML =
+            '<div class="stat"><span>Bridge</span><strong>Online on port ' + escapeText(health.port) + '</strong></div>' +
+            '<div class="stat"><span>Slicer</span><strong>' + escapeText(health.engine && health.engine.available ? 'Ready' : 'Needs CuraEngine') + '</strong></div>' +
+            '<div class="stat"><span>Printers</span><strong>' + escapeText((health.printers || []).length) + ' saved</strong></div>';
+
+          const data = await request('/printers?includeLan=1');
+          renderPrinters(data.printers || []);
+        } catch (err) {
+          list.innerHTML = '<p>Bridge setup could not load: ' + escapeText(err.message) + '</p>';
+        }
+      }
+
+      function renderPrinters(printers) {
+        if (!printers.length) {
+          list.innerHTML = '<p>No printers yet. Add the printer here, then refresh the iPhone app.</p>';
+          return;
+        }
+
+        list.innerHTML = printers.map(function (printer) {
+          return '<div class="printer-row">' +
+            '<div><strong>' + escapeText(printer.name) + '</strong><small>' +
+            escapeText(printer.model || 'Bambu') + ' at ' + escapeText(printer.ip || 'LAN IP missing') +
+            '</small></div>' +
+            '<div class="row-actions">' +
+            '<button class="secondary" type="button" data-action="test" data-id="' + escapeText(printer.id) + '">Test</button>' +
+            '<button class="danger" type="button" data-action="delete" data-id="' + escapeText(printer.id) + '">Remove</button>' +
+            '</div></div>';
+        }).join('');
+      }
+
+      form.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        message.textContent = 'Saving printer...';
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await request('/printers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          form.reset();
+          message.textContent = 'Saved. Refresh the iPhone Printers tab.';
+          await load();
+        } catch (err) {
+          message.textContent = err.message;
+        }
+      });
+
+      list.addEventListener('click', async function (event) {
+        const button = event.target.closest('button');
+        if (!button) return;
+        const id = button.dataset.id;
+        const action = button.dataset.action;
+        button.disabled = true;
+        try {
+          if (action === 'test') {
+            await request('/printers/' + encodeURIComponent(id) + '/test', { method: 'POST' });
+            message.textContent = 'Printer answered through the bridge.';
+          }
+          if (action === 'delete') {
+            await request('/printers/' + encodeURIComponent(id), { method: 'DELETE' });
+            message.textContent = 'Printer removed.';
+            await load();
+          }
+        } catch (err) {
+          message.textContent = err.message;
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      load();
+    </script>
+  </body>
+</html>`;
 }
 
 function commandExists(command) {
@@ -376,13 +678,22 @@ app.get('/health', (_req, res) => {
     port: PORT,
     localAddresses: getLocalAddresses(),
     engine: engineStatus(),
-    printers: config.printers.map(publicPrinter),
+    printers: config.printers.map((printer) => publicPrinter(printer)),
   });
 });
 
-app.get('/printers', (_req, res) => {
+app.get('/', (_req, res) => {
+  res.redirect('/setup');
+});
+
+app.get('/setup', (_req, res) => {
+  res.type('html').send(setupPageHtml());
+});
+
+app.get('/printers', (req, res) => {
   const config = readConfig();
-  res.json({ printers: config.printers.map(publicPrinter) });
+  const includeLan = req.query.includeLan === '1';
+  res.json({ printers: config.printers.map((printer) => publicPrinter(printer, { includeLan })) });
 });
 
 app.post('/printers', (req, res, next) => {
