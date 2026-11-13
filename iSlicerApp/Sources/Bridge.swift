@@ -193,19 +193,25 @@ final class Bridge {
         _ = try await send("/printers/\(id)/test", method: "POST", timeout: 25)
     }
 
-    /// Uploads the model and starts slicing. Returns the bridge's job id.
-    func startSlice(file: URL, settings: SliceSettings) async throws -> String {
+    /// Uploads the model (or a whole laid-out plate) and starts slicing. Returns the bridge's job id.
+    func startSlice(files: [URL], layout: [[String: Any]]?, name: String, settings: SliceSettings) async throws -> String {
         let boundary = "islicer-\(UUID().uuidString)"
         var body = Data()
         func field(_ name: String, _ value: String) {
             body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
         }
-        let name = file.lastPathComponent.replacingOccurrences(of: "\"", with: "")
         field("settings", String(decoding: try JSONEncoder().encode(settings), as: UTF8.self))
-        field("filename", name)
-        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"; filename=\"\(name)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
-        body.append(try Data(contentsOf: file))
-        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        field("filename", name.replacingOccurrences(of: "\"", with: ""))
+        if let layout {
+            field("plate", String(decoding: try JSONSerialization.data(withJSONObject: layout), as: UTF8.self))
+        }
+        for file in files {
+            let fileName = file.lastPathComponent.replacingOccurrences(of: "\"", with: "")
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"; filename=\"\(fileName)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+            body.append(try Data(contentsOf: file))
+            body.append(Data("\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)--\r\n".utf8))
         let reply = json(try await send("/slice", method: "POST", body: body,
                                         contentType: "multipart/form-data; boundary=\(boundary)", timeout: 300))
         guard let id = reply["jobId"] as? String else { throw BridgeError("The bridge did not start the slice.") }

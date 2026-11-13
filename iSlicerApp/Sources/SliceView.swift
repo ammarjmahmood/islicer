@@ -5,7 +5,7 @@ import SwiftUI
 /// Pick settings for one model, slice it on the home computer, then send it to a printer.
 struct SliceView: View {
     @Environment(AppModel.self) private var model
-    let file: ModelFile
+    let source: SliceSource
 
     @State private var settings = SliceSettings()
     @State private var preset: Preset = .normal
@@ -16,14 +16,6 @@ struct SliceView: View {
 
     var body: some View {
         Form {
-            if file.isSTL {
-                Section {
-                    ModelPreview(url: file.url)
-                        .frame(height: 220)
-                        .listRowInsets(EdgeInsets())
-                }
-            }
-
             Section("Quality") {
                 Picker("Preset", selection: $preset) {
                     ForEach(Preset.allCases) { Text($0.rawValue).tag($0) }
@@ -34,8 +26,12 @@ struct SliceView: View {
             }
 
             Section("Printer and material") {
-                Picker("Printer", selection: $settings.printerModel) {
-                    ForEach(PrinterModel.allCases) { Text($0.label).tag($0) }
+                if case .plate = source {
+                    LabeledContent("Printer", value: settings.printerModel.label)
+                } else {
+                    Picker("Printer", selection: $settings.printerModel) {
+                        ForEach(PrinterModel.allCases) { Text($0.label).tag($0) }
+                    }
                 }
                 Picker("Filament", selection: $settings.filament) {
                     ForEach(Filament.allCases) { Text($0.rawValue).tag($0) }
@@ -108,14 +104,16 @@ struct SliceView: View {
                 } else if !model.canReachBridge {
                     Text("Pair with your home computer in Settings first.")
                 } else {
-                    Text("Sliced by Bambu Studio on your home computer, with Bambu's own profiles.")
+                    Text(isPlate ? "Printed exactly as you laid it out. Sliced by Bambu Studio on your home computer." : "Placed automatically. Sliced by Bambu Studio on your home computer, with Bambu's own profiles.")
                 }
             }
         }
-        .navigationTitle(file.name)
+        .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            if let first = model.printers.first, let known = PrinterModel(rawValue: first.model) {
+            if case let .plate(plate) = source {
+                settings.printerModel = plate.printer
+            } else if let first = model.printers.first, let known = PrinterModel(rawValue: first.model) {
                 settings.printerModel = known
             }
         }
@@ -123,12 +121,17 @@ struct SliceView: View {
         .sheet(item: $printing) { PrintSheet(job: $0) }
     }
 
+    private var isPlate: Bool {
+        if case .plate = source { return true }
+        return false
+    }
+
     private func slice() {
         slicing = true
         failure = nil
         Task {
             do {
-                job = try await model.slice(file, settings: settings)
+                job = try await model.slice(source, settings: settings)
             } catch {
                 failure = error.localizedDescription
             }
@@ -230,55 +233,5 @@ struct PrintSheet: View {
             }
             sending = false
         }
-    }
-}
-
-/// A turnable 3D look at an STL before slicing.
-struct ModelPreview: View {
-    let url: URL
-    @State private var scene: SCNScene?
-
-    var body: some View {
-        ZStack {
-            Color(.secondarySystemBackground)
-            if let scene {
-                SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting])
-            } else {
-                ProgressView()
-            }
-        }
-        .task(id: url) {
-            let source = url
-            scene = await Task.detached(priority: .userInitiated) { ModelPreview.load(source) }.value
-        }
-    }
-
-    nonisolated private static func load(_ url: URL) -> SCNScene? {
-        let asset = MDLAsset(url: url)
-        guard asset.count > 0 else { return nil }
-        let scene = SCNScene(mdlAsset: asset)
-        scene.background.contents = UIColor.secondarySystemBackground
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor(red: 0, green: 0.83, blue: 0.67, alpha: 1)
-        material.lightingModel = .physicallyBased
-        material.roughness.contents = 0.55
-        scene.rootNode.enumerateChildNodes { node, _ in
-            node.geometry?.materials = [material]
-        }
-        // STL is Z-up; SceneKit is Y-up.
-        scene.rootNode.childNodes.forEach { $0.eulerAngles.x = -.pi / 2 }
-
-        // Look at the model from a raised three-quarter angle, far enough to fit it all.
-        let (center, radius) = scene.rootNode.boundingSphere
-        let distance = max(radius, 1) * 2.6
-        let camera = SCNCamera()
-        camera.zNear = Double(distance) / 100
-        camera.zFar = Double(distance) * 10
-        let cameraNode = SCNNode()
-        cameraNode.camera = camera
-        cameraNode.position = SCNVector3(center.x + distance * 0.62, center.y + distance * 0.5, center.z + distance * 0.62)
-        cameraNode.look(at: center)
-        scene.rootNode.addChildNode(cameraNode)
-        return scene
     }
 }

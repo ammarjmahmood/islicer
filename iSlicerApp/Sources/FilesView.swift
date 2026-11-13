@@ -81,7 +81,10 @@ struct FilesView: View {
                 }
             }
             .navigationTitle("iSlicer")
-            .navigationDestination(for: ModelFile.self) { SliceView(file: $0) }
+            .navigationDestination(for: ModelFile.self) { file in
+                // STL files open in the plate editor. A 3MF already carries its own layout.
+                if file.isSTL { PlateEditorView(file: file) } else { SliceView(source: .file(file)) }
+            }
             .toolbar {
                 Button { importing = true } label: { Image(systemName: "plus") }
             }

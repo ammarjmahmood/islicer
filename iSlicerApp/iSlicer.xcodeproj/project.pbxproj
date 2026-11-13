@@ -10,6 +10,8 @@
 		1C2433F5F2F78EA2D9659AEF /* iSlicerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CAB025DD47A0F71241D18F /* iSlicerApp.swift */; };
 		275130746D489CBA35329CAE /* SliceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3EF6737E49F9BFE8903770 /* SliceView.swift */; };
 		28291A3B293C2AF1BBF622D2 /* PrintersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADB7927FD1E786294B00FDCE /* PrintersView.swift */; };
+		2C4B46A8C0B1771C37796471 /* Plate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B3E3C246202D63507D1E2C9 /* Plate.swift */; };
+		2EB1F0CA5E0AFFCC8BFE9C8C /* PlateEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD102653D5ECAB22C1F280B8 /* PlateEditorView.swift */; };
 		361120BB95383B117B27E314 /* SetupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EA1FD5BA014D24430EAD7BD /* SetupViews.swift */; };
 		5EB2382558D94E12FC47B673 /* FilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9315A9AC5AD082679307A912 /* FilesView.swift */; };
 		6325D3B75FE62F66F856CF70 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4000678A1A0279A2687DCD06 /* Models.swift */; };
@@ -26,12 +28,14 @@
 		7EA1FD5BA014D24430EAD7BD /* SetupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupViews.swift; sourceTree = "<group>"; };
 		7EC2A4FC5D4AA6E3ADBB0B2E /* iSlicer.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = iSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9315A9AC5AD082679307A912 /* FilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesView.swift; sourceTree = "<group>"; };
+		9B3E3C246202D63507D1E2C9 /* Plate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Plate.swift; sourceTree = "<group>"; };
 		A3CAB025DD47A0F71241D18F /* iSlicerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iSlicerApp.swift; sourceTree = "<group>"; };
 		A55A5290A3CD21F883B288CA /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		ADB7927FD1E786294B00FDCE /* PrintersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintersView.swift; sourceTree = "<group>"; };
 		BD3EF6737E49F9BFE8903770 /* SliceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SliceView.swift; sourceTree = "<group>"; };
 		C8600E523D3F88CFAF7695BF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		C9A20F7E2AAAED589EA87AA8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CD102653D5ECAB22C1F280B8 /* PlateEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateEditorView.swift; sourceTree = "<group>"; };
 		F8EA0A59E780E7D4BC334A5C /* Bridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -53,6 +57,8 @@
 				A3CAB025DD47A0F71241D18F /* iSlicerApp.swift */,
 				4000678A1A0279A2687DCD06 /* Models.swift */,
 				3405D2D08D1F0FCB8F410DC7 /* Pairing.swift */,
+				9B3E3C246202D63507D1E2C9 /* Plate.swift */,
+				CD102653D5ECAB22C1F280B8 /* PlateEditorView.swift */,
 				ADB7927FD1E786294B00FDCE /* PrintersView.swift */,
 				C8600E523D3F88CFAF7695BF /* SettingsView.swift */,
 				7EA1FD5BA014D24430EAD7BD /* SetupViews.swift */,
@@ -146,6 +152,8 @@
 				5EB2382558D94E12FC47B673 /* FilesView.swift in Sources */,
 				6325D3B75FE62F66F856CF70 /* Models.swift in Sources */,
 				6A741613AF8FD44C4EAC27E2 /* Pairing.swift in Sources */,
+				2C4B46A8C0B1771C37796471 /* Plate.swift in Sources */,
+				2EB1F0CA5E0AFFCC8BFE9C8C /* PlateEditorView.swift in Sources */,
 				28291A3B293C2AF1BBF622D2 /* PrintersView.swift in Sources */,
 				A432308B04E058450A0ADF09 /* SettingsView.swift in Sources */,
 				361120BB95383B117B27E314 /* SetupViews.swift in Sources */,
@@ -209,7 +217,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 6565NDQS5B;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -229,7 +237,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 3.0.0;
+				MARKETING_VERSION = 3.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -293,7 +301,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 6565NDQS5B;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -307,7 +315,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 3.0.0;
+				MARKETING_VERSION = 3.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

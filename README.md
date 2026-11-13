@@ -83,10 +83,20 @@ open iSlicer.xcodeproj
 | `Sources/Bridge.swift` | Finds the bridge and talks to it: health, printers, discovery, slice, print. |
 | `Sources/AppModel.swift` | App state: connection, printers, imported models, recent slices. |
 | `Sources/FilesView.swift` | Models list, import, "ready to print" list. |
-| `Sources/SliceView.swift` | Slice settings, 3D preview of STL files, the print sheet. |
+| `Sources/Plate.swift` | The build plate: models with rotation, scale and position; arrange; fit checks. |
+| `Sources/PlateEditorView.swift` | 3D plate editor (SceneKit): drag to move, turn, scale, lay flat, duplicate. |
+| `Sources/SliceView.swift` | Slice settings and the print sheet. |
 | `Sources/PrintersView.swift` | Printers, and Add Printer with automatic discovery. |
 | `Sources/SetupViews.swift` | Setup checklist, pairing card, QR scanner. |
 | `Sources/SettingsView.swift` | Pairing, install command, manual address. |
+
+The plate editor: opening an STL puts it on a 3D bed sized for the printer. Add more models
+with ＋, drag one to move it, drag empty space to look around. Turn 90° about X, Y or Z, spin
+15°, scale, duplicate, auto-arrange, or tap **Lay flat** and then a face to rest it on the bed.
+The app sends the files plus the layout; the bridge bakes it into one model (`server/plate.js`)
+and slices with arranging turned off, so it prints exactly as placed. 3MF files skip the editor
+and are placed automatically. Not in the editor yet: cutting, painting supports or seams,
+per-model settings, multi-colour.
 
 Adding a printer: the bridge listens for Bambu printers announcing themselves on the home
 network (`server/discover.js`) and offers them in the app with name, model, IP and serial

@@ -12,6 +12,7 @@ const QRCode = require('qrcode');
 const bambuSlicer = require('./bambu-slicer');
 const remote = require('./remote');
 const { discover } = require('./discover');
+const { buildPlate } = require('./plate');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8005);
@@ -900,22 +901,51 @@ app.post('/printers/:id/test', async (req, res, next) => {
   }
 });
 
-app.post('/slice', upload.single('model'), async (req, res, next) => {
+const BED = { A1Mini: [180, 180, 180], A1: [256, 256, 256], X1C: [256, 256, 250], X1: [256, 256, 250], P1S: [256, 256, 250], P1P: [256, 256, 250] };
+
+// One model, or a whole plate: several STL files plus a `plate` layout from the app
+// ([{ file: index, matrix, scale, x, y }]) that the bridge bakes into one model.
+app.post('/slice', upload.array('model', 24), async (req, res, next) => {
   try {
-    if (!req.file) {
+    const files = req.files || [];
+    if (files.length === 0) {
       res.status(400).json({ error: 'No model file uploaded.' });
       return;
     }
 
     const settings = JSON.parse(req.body.settings || '{}');
-    const filename = sanitizeModelName(req.body.filename || req.file.originalname || 'model.stl');
+    const layout = req.body.plate ? JSON.parse(req.body.plate) : null;
+    const filename = sanitizeModelName(req.body.filename || files[0].originalname || 'model.stl');
     const jobId = uuidv4();
-    const ext = path.extname(filename).toLowerCase();
-    const modelPath = path.join(UPLOAD_DIR, `${jobId}${ext}`);
     const useBambu = bambuSlicer.status().available;
     const gcodePath = path.join(GCODE_DIR, useBambu ? `${jobId}.gcode.3mf` : `${jobId}.gcode`);
+    let modelPath;
 
-    fs.renameSync(req.file.path, modelPath);
+    if (layout) {
+      const items = layout.map((item) => {
+        const file = files[Number(item.file)];
+        if (!file) throw Object.assign(new Error('The plate refers to a file that was not uploaded.'), { status: 400 });
+        if (path.extname(file.originalname || '').toLowerCase() !== '.stl') {
+          throw Object.assign(new Error('Plates with several models need STL files. Slice a 3MF by itself.'), { status: 400 });
+        }
+        return { ...item, path: file.path };
+      });
+      modelPath = path.join(UPLOAD_DIR, `${jobId}.stl`);
+      const size = buildPlate(items, modelPath);
+      for (const file of files) fs.rmSync(file.path, { force: true });
+      const bed = BED[settings.printerModel] || BED.P1S;
+      if (size.min[0] < -0.5 || size.min[1] < -0.5 || size.max[0] > bed[0] + 0.5 || size.max[1] > bed[1] + 0.5) {
+        throw Object.assign(new Error('Part of the plate hangs over the edge of the bed. Move or shrink the models.'), { status: 400 });
+      }
+      if (size.max[2] > bed[2]) {
+        throw Object.assign(new Error(`The plate is ${Math.round(size.max[2])} mm tall; this printer fits ${bed[2]} mm.`), { status: 400 });
+      }
+      settings.keepLayout = true;
+    } else {
+      const ext = path.extname(filename).toLowerCase();
+      modelPath = path.join(UPLOAD_DIR, `${jobId}${ext}`);
+      fs.renameSync(files[0].path, modelPath);
+    }
 
     setJob(jobId, {
       id: jobId,

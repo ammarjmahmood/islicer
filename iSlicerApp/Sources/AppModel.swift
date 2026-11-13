@@ -2,6 +2,19 @@ import Foundation
 import Observation
 import SwiftUI
 
+/// What is being sliced: one file as it is, or a plate laid out in the editor.
+enum SliceSource {
+    case file(ModelFile)
+    case plate(PlateModel)
+
+    @MainActor var title: String {
+        switch self {
+        case let .file(file): return file.name
+        case let .plate(plate): return plate.summary
+        }
+    }
+}
+
 /// App-wide state: connection, printers, imported models and recent slices.
 @MainActor
 @Observable
@@ -101,9 +114,17 @@ final class AppModel {
     // MARK: Slicing and printing
 
     /// Slices on the bridge and waits for the result. Throws with the bridge's own reason on failure.
-    func slice(_ file: ModelFile, settings: SliceSettings) async throws -> SliceJob {
-        let id = try await bridge.startSlice(file: file.url, settings: settings)
-        var job = SliceJob(id: id, fileName: file.name, status: "slicing", printer: settings.printerModel.label)
+    func slice(_ source: SliceSource, settings: SliceSettings) async throws -> SliceJob {
+        let id: String
+        switch source {
+        case let .file(file):
+            id = try await bridge.startSlice(files: [file.url], layout: nil, name: file.name, settings: settings)
+        case let .plate(plate):
+            let payload = plate.payload
+            let name = plate.items.count == 1 ? plate.items[0].file.name : "plate-\(plate.items.count)-models.stl"
+            id = try await bridge.startSlice(files: payload.files, layout: payload.layout, name: name, settings: settings)
+        }
+        var job = SliceJob(id: id, fileName: source.title, status: "slicing", printer: settings.printerModel.label)
         let started = Date()
         while Date().timeIntervalSince(started) < 30 * 60 {
             try await Task.sleep(for: .seconds(1.5))

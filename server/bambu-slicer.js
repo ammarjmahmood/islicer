@@ -201,7 +201,9 @@ function slice(modelPath, outDir, jobId, settings = {}) {
 
     const outName = `${jobId}.gcode.3mf`;
     const args = [
-      '--slice', '0', '--arrange', '1', '--orient', settings.autoOrient === false ? '0' : '1',
+      // A plate laid out in the app is printed exactly as placed; a single model is auto-placed.
+      '--slice', '0', '--arrange', settings.keepLayout ? '0' : '1',
+      '--orient', settings.keepLayout || settings.autoOrient === false ? '0' : '1',
       '--load-settings', `${path.join(work, 'machine.json')};${path.join(work, 'process.json')}`,
       '--load-filaments', path.join(work, 'filament.json'),
       '--outputdir', work,
