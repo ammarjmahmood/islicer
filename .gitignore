@@ -52,3 +52,8 @@ server/data/
 # macOS app builds
 server-app/.build/
 BambuSlicerServer.app/
+
+# Swift app
+iSlicerApp/build/
+xcuserdata/
+*.xcuserstate

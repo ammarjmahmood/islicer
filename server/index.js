@@ -11,6 +11,7 @@ const mqtt = require('mqtt');
 const QRCode = require('qrcode');
 const bambuSlicer = require('./bambu-slicer');
 const remote = require('./remote');
+const { discover } = require('./discover');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8005);
@@ -844,6 +845,17 @@ app.get('/printers', (req, res) => {
   const config = readConfig();
   const includeLan = req.query.includeLan === '1';
   res.json({ printers: config.printers.map((printer) => publicPrinter(printer, { includeLan })) });
+});
+
+// Printers heard on the home network that are not added yet.
+app.get('/discover', async (_req, res, next) => {
+  try {
+    const known = new Set(readConfig().printers.map((printer) => printer.serialNumber));
+    const found = await discover(4500);
+    res.json({ printers: found.map((printer) => ({ ...printer, added: known.has(printer.serialNumber) })) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.post('/printers', (req, res, next) => {

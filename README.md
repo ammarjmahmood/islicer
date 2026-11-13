@@ -66,28 +66,34 @@ Bridge settings (environment variables): `PORT`, `ISLICER_REMOTE=off` (home netw
 `ISLICER_PUBLIC_URL`, `ISLICER_RENDEZVOUS`, `BAMBU_STUDIO_PATH` + `BAMBU_PROFILES_DIR`, `CLOUDFLARED_PATH`.
 If Bambu Studio is missing the bridge falls back to CuraEngine with generic profiles.
 
-## Build The iOS App
+## The iPhone app
 
-For simulator/device development:
-
-```bash
-npm install
-npx expo prebuild -p ios
-cd ios && RCT_USE_PREBUILT_RNCORE=0 RCT_USE_RN_DEP=0 LANG=en_US.UTF-8 pod install
-```
-
-Then open `ios/iSlicer.xcworkspace`. `plugins/withPodMinimumTarget.js` applies two build fixes
-needed on current Xcode. The app icon comes from `scripts/make_icon.py`.
-
-For archive deployment:
+A native SwiftUI app in `iSlicerApp/` (iOS 17+). No third-party packages.
 
 ```bash
-open ios/iSlicer.xcworkspace
+cd iSlicerApp
+brew install xcodegen   # once
+xcodegen                # regenerates iSlicer.xcodeproj from project.yml
+open iSlicer.xcodeproj
 ```
 
-In Xcode, select a signing team, choose a real device or generic iOS device, then Product -> Archive. Distribute through TestFlight, Ad Hoc, or your Apple Developer workflow.
+| File | What it holds |
+| --- | --- |
+| `Sources/Pairing.swift` | Pairing code maths (CryptoKit), Keychain storage. Mirrors `server/remote.js`. |
+| `Sources/Bridge.swift` | Finds the bridge and talks to it: health, printers, discovery, slice, print. |
+| `Sources/AppModel.swift` | App state: connection, printers, imported models, recent slices. |
+| `Sources/FilesView.swift` | Models list, import, "ready to print" list. |
+| `Sources/SliceView.swift` | Slice settings, 3D preview of STL files, the print sheet. |
+| `Sources/PrintersView.swift` | Printers, and Add Printer with automatic discovery. |
+| `Sources/SetupViews.swift` | Setup checklist, pairing card, QR scanner. |
+| `Sources/SettingsView.swift` | Pairing, install command, manual address. |
 
-App Store upload requires Apple Developer signing and App Store Connect credentials. This repo can build the app, but it cannot publish to the App Store without those credentials.
+Adding a printer: the bridge listens for Bambu printers announcing themselves on the home
+network (`server/discover.js`) and offers them in the app with name, model, IP and serial
+number filled in. The person only types the 8-character Access Code from the printer's screen.
+
+TestFlight: `xcodebuild -project iSlicer.xcodeproj -scheme iSlicer -configuration Release -destination 'generic/platform=iOS' -archivePath build/iSlicer.xcarchive -allowProvisioningUpdates archive`,
+then export with `ExportOptions.plist`. The icon comes from `scripts/make_icon.py`.
 
 ## Build The macOS Bridge App
 
@@ -141,6 +147,7 @@ GET    /health
 GET    /pair            (home network only)
 GET    /pair/terminal   (home network only)
 GET    /printers
+GET    /discover
 GET    /setup           (home network only)
 POST   /printers
 DELETE /printers/:id
