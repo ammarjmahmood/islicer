@@ -10,6 +10,7 @@ import PrintersScreen from '../screens/PrintersScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import SliceSettingsScreen from '../screens/SliceSettingsScreen';
 import SliceProgressScreen from '../screens/SliceProgressScreen';
+import AddPrinterScreen from '../screens/AddPrinterScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -76,6 +77,7 @@ export default function Navigation() {
         <Stack.Screen name="Main" component={MainTabs} />
         <Stack.Screen name="SliceSettings" component={SliceSettingsScreen} />
         <Stack.Screen name="SliceProgress" component={SliceProgressScreen} />
+        <Stack.Screen name="AddPrinter" component={AddPrinterScreen} options={{ presentation: 'modal' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -6,9 +6,8 @@ import {
   FlatList,
   TouchableOpacity,
   Alert,
-  Linking,
 } from 'react-native';
-import { useFocusEffect, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS } from '../constants/theme';
 import { PrinterConfig } from '../types';
@@ -19,10 +18,11 @@ import {
   sendPrint,
   testBridgePrinter,
 } from '../services/bambu';
-import { resolveBridgeUrl } from '../services/bridge';
+import SetupGuide from '../components/SetupGuide';
 
 export default function PrintersScreen() {
   const route = useRoute<any>();
+  const navigation = useNavigation<any>();
   const gcodeJobId = route.params?.gcodeJobId;
 
   const [printers, setPrinters] = useState<PrinterConfig[]>([]);
@@ -47,15 +47,6 @@ export default function PrintersScreen() {
       setPrinters(cachedPrinters);
     } finally {
       setSyncing(false);
-    }
-  }
-
-  async function openBridgeSetup() {
-    try {
-      const bridgeUrl = await resolveBridgeUrl();
-      await Linking.openURL(`${bridgeUrl}/setup`);
-    } catch (err: any) {
-      Alert.alert('Bridge Not Ready', err.message);
     }
   }
 
@@ -161,7 +152,7 @@ export default function PrintersScreen() {
       <View style={styles.infoCard}>
         <Ionicons name="home" size={20} color={COLORS.primary} />
         <Text style={styles.infoText}>
-          Printer LAN details live on the bridge computer. Your iPhone only connects to the bridge.
+          Printer details are kept on your home computer. This phone only talks to that computer.
         </Text>
       </View>
 
@@ -173,12 +164,8 @@ export default function PrintersScreen() {
       )}
 
       {printers.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons name="print-outline" size={64} color={COLORS.textMuted} />
-          <Text style={styles.emptyTitle}>No bridge printers</Text>
-          <Text style={styles.emptyText}>
-            Add your Bambu printer from the bridge setup page, then refresh here.
-          </Text>
+        <View style={{ paddingHorizontal: SPACING.lg, flex: 1 }}>
+          <SetupGuide alwaysShow />
         </View>
       ) : (
         <FlatList
@@ -195,9 +182,9 @@ export default function PrintersScreen() {
           <Ionicons name="refresh" size={20} color={COLORS.secondary} />
           <Text style={styles.secondaryBtnText}>Refresh</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.setupBtn} onPress={openBridgeSetup}>
-          <Ionicons name="settings" size={20} color={COLORS.bg} />
-          <Text style={styles.setupBtnText}>Bridge Setup</Text>
+        <TouchableOpacity style={styles.setupBtn} onPress={() => navigation.navigate('AddPrinter')}>
+          <Ionicons name="add" size={20} color={COLORS.bg} />
+          <Text style={styles.setupBtnText}>Add Printer</Text>
         </TouchableOpacity>
       </View>
     </View>

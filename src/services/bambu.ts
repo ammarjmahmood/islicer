@@ -6,6 +6,21 @@ export async function getBridgePrinters(): Promise<PrinterConfig[]> {
   return data.printers;
 }
 
+export async function addBridgePrinter(fields: {
+  name: string;
+  model: PrinterConfig['model'];
+  ip: string;
+  serialNumber: string;
+  accessCode: string;
+}): Promise<PrinterConfig> {
+  const data = await bridgeFetch<{ printer: PrinterConfig }>('/printers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  });
+  return data.printer;
+}
+
 export async function removeBridgePrinter(id: string): Promise<void> {
   await bridgeFetch<{ ok: boolean }>(`/printers/${id}`, { method: 'DELETE' });
 }

@@ -78,6 +78,7 @@ export type RootStackParamList = {
   Main: undefined;
   SliceSettings: { modelId: string };
   PrinterSetup: undefined;
+  AddPrinter: undefined;
   PrinterDetail: { printerId: string };
   SliceProgress: { jobId: string };
 };

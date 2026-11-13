@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS } from '../constants/theme';
 import { getSliceServerUrl, setSliceServerUrl } from '../services/storage';
 import PairingCard from '../components/PairingCard';
+import SetupGuide from '../components/SetupGuide';
 
 type ServerMode = 'tailscale' | 'local' | 'custom';
 type ServerStatus = 'unknown' | 'online' | 'offline';
@@ -124,6 +125,8 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <SetupGuide />
+
         <Text style={styles.sectionTitle}>Your computer</Text>
         <PairingCard />
 
@@ -216,14 +219,14 @@ export default function SettingsScreen() {
             Run this on the Mac, Ubuntu box or mini PC that stays on at home on the same network as your Bambu printer.
           </Text>
 
-          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>2. Add your printer</Text>
+          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>2. Pair this phone</Text>
           <Text style={styles.cardDescription}>
-            On that computer, open the bridge page it prints (http://localhost:8005/setup) and add the printer. The iPhone never needs the printer IP or access code.
+            The installer ends by showing a QR code. Scan it above. To see it again, open http://(your computer):8005/pair on a device on your home Wi-Fi.
           </Text>
 
-          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Pair this phone</Text>
+          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Add your Bambu printer</Text>
           <Text style={styles.cardDescription}>
-            Open http://localhost:8005/pair on that computer and scan the code above. Done once, it works from anywhere: home Wi-Fi, cellular, or travelling.
+            In the Printers tab, tap Add Printer. You will need the printer's IP address, Access Code and serial number; the app shows where to find each on the printer's screen.
           </Text>
         </View>
 

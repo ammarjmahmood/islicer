@@ -285,7 +285,7 @@ function setupPageHtml() {
       <header>
         <h1>iSlicer Bridge Setup</h1>
         <p><a href="/pair" style="color:inherit">Pair your phone: show the QR code &rarr;</a></p>
-        <p>This is the desktop-side setup. Only the bridge needs printer LAN details. The iPhone only needs the bridge URL.</p>
+        <p>Three steps, done once: <strong>1.</strong> this bridge is installed (done). <strong>2.</strong> <a href="/pair" style="color:inherit">Pair your phone</a> by scanning the QR code. <strong>3.</strong> Add your Bambu printer below, or from the iSlicer app.</p>
       </header>
 
       <div class="status" id="status">
@@ -297,7 +297,12 @@ function setupPageHtml() {
       <div class="grid">
         <section>
           <h2>Configured printers</h2>
-          <p class="note">For easiest remote printing, run this bridge on a computer that stays at home with the printer. A laptop at work can only print home if it has a VPN or Tailscale subnet route back to the printer LAN.</p>
+          <p class="note">This computer and the printer must be on the same home network, and this computer must stay on.</p>
+          <h2 style="margin-top:22px">Where to find the printer details</h2>
+          <p class="note"><strong>IP address and Access Code.</strong> On the printer's own screen open Settings (the gear), then <em>WLAN</em> on P1 printers, <em>Network</em> on X1 printers, or <em>LAN Only Mode</em> on A1 printers. Both values are shown there. The Access Code is 8 letters and numbers.</p>
+          <p class="note"><strong>Serial number.</strong> Settings &rarr; Device (X1: Settings &rarr; General &rarr; Device info). It is 15 characters. It is also in the Bambu Handy app under your printer's settings.</p>
+          <p class="note"><strong>If the printer does not answer.</strong> Newer Bambu firmware only accepts prints from third-party apps when <em>LAN Only Mode</em> and <em>Developer Mode</em> are turned on at the printer (Settings &rarr; LAN Only Mode). Bambu Handy and cloud printing stop working while LAN Only Mode is on.</p>
+          <p class="note"><strong>Keep the pairing code private.</strong> Anyone who has it can send prints to this printer.</p>
           <div class="printer-list" id="printer-list"></div>
         </section>
 
@@ -324,11 +329,11 @@ function setupPageHtml() {
           </label>
           <label>
             Serial number
-            <input name="serialNumber" placeholder="Bambu serial number" required />
+            <input name="serialNumber" placeholder="15 characters, from Settings → Device" required />
           </label>
           <label>
             LAN access code
-            <input name="accessCode" placeholder="From printer network settings" type="password" required />
+            <input name="accessCode" placeholder="8 characters, from the printer screen" type="password" required />
           </label>
           <button class="primary" type="submit">Save printer to bridge</button>
           <p class="message" id="message"></p>
