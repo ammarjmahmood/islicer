@@ -8,7 +8,8 @@ Setup is three steps, done once:
 
 1. **On the home computer** run one command. It installs everything and prints a QR code.
 2. **On the iPhone** open iSlicer and scan the code (or type it).
-3. **Add your printer** on the bridge's setup page.
+3. **Add your printer** in the app (Printers → Add Printer). It shows where to find the IP
+   address, Access Code and serial number on the printer's screen.
 
 No accounts, no VPN, no router changes.
 
@@ -54,13 +55,10 @@ On the computer that stays on at home, on the same network as the printer:
 curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
 ```
 
-(While this repository is private that link needs a login; copy the `server/` folder to the
-computer and run `bash install.sh` in it instead.)
-
 It installs Node.js, cloudflared and Bambu Studio, sets up a service that starts at boot, and
 prints the pairing QR code. Then:
 
-- Add the printer: `http://<computer>:8005/setup` (name, LAN IP, serial number, model, access code).
+- Add the printer in the app, or at `http://<computer>:8005/setup` from the home network.
 - Show the pairing code again: `http://<computer>:8005/pair`.
 - Logs: `journalctl -u islicer-bridge -f`.
 
