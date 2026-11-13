@@ -1,95 +1,72 @@
-# iSlicer Bridge
+# iSlicer
 
-Slice STL and 3MF files from an iPhone, run the heavy slicing work on an always-on Mac or Ubuntu machine, and send the result to a Bambu Lab printer from anywhere.
+Slice STL and 3MF files from an iPhone and send them to a Bambu Lab printer from anywhere.
+The heavy work runs on an always-on computer at home (Ubuntu or a Mac), using the real
+Bambu Studio engine and Bambu's own printer and filament profiles.
 
-Live setup site: https://islicer-amarsbars-projects.vercel.app
+Setup is three steps, done once:
 
-## Architecture
+1. **On the home computer** run one command. It installs everything and prints a QR code.
+2. **On the iPhone** open iSlicer and scan the code (or type it).
+3. **Add your printer** on the bridge's setup page.
+
+No accounts, no VPN, no router changes.
+
+## How it works
 
 ```
-iPhone app
-  imports STL / 3MF
-  connects to bridge over Tailscale, LAN, or a custom URL
-        |
-        v
-Mac / Ubuntu bridge
-  stores printer LAN credentials
-  serves the printer setup page
-  slices with CuraEngine
-  uploads G-code to printer with FTPS
-  starts print with MQTT
-        |
-        v
-Bambu printer
-  P1S, P1P, X1C, X1, A1, A1 mini
+iPhone app ──https──▶ Cloudflare quick tunnel ──▶ bridge at home ──LAN──▶ Bambu printer
+     │                                              ▲
+     └── pairing code ──▶ drop box (ntfy) ◀── encrypted current address
 ```
 
-The iPhone does not need the printer LAN IP and does not need to be on the same Wi-Fi as the printer. It only needs to reach the bridge. The bridge must be at home with the printer, or it must have a VPN/subnet route back to the printer LAN.
+- **Pairing code.** The bridge makes one 12-character code. Both sides derive three things
+  from it: where the bridge leaves its address, the key to decrypt that address, and the
+  access token the phone sends with every request.
+- **Remote access.** The bridge opens an outbound Cloudflare quick tunnel, so nothing has to be
+  opened on the router. The tunnel's address changes when it restarts, so the bridge posts the
+  current one, AES-256-GCM encrypted, to a public drop box (an [ntfy](https://ntfy.sh) topic).
+  The phone reads it, decrypts it, and reconnects by itself.
+- **Slicing.** Bambu Studio in command-line mode. The bridge flattens Bambu's profile
+  inheritance first (`server/bambu-slicer.js`); the command line does not, and without that it
+  silently produces generic start/end G-code. Output is a `.gcode.3mf`.
+- **Printing.** The bridge uploads the `.gcode.3mf` over FTPS and starts it over MQTT, on the LAN.
+- **Privacy.** Printer IP and access code never leave the bridge. Setup and pairing pages only
+  answer on the home network, never through the tunnel.
 
-## What Changed In This Build
+### Things to know
 
-- The desktop service is now a real bridge API with `/health`, `/printers`, `/slice`, `/status/:jobId`, and `/print`.
-- Printer access codes are stored on the bridge in `server/data/config.json`.
-- The bridge now serves `/setup` for printer LAN setup, so the iPhone only stores the bridge URL.
-- The mobile app syncs bridge printers and sends print requests back to the bridge.
-- Unsupported direct Bambu Cloud upload assumptions were removed from the app.
-- The server no longer creates placeholder G-code. If CuraEngine or its definitions are missing, slicing fails clearly.
-- A static website lives in `website/` with installation steps and a product demo reel.
+- Free third-party services carry the remote link: Cloudflare quick tunnels (no uptime promise)
+  and ntfy.sh. Cloudflare can see traffic in transit (it terminates TLS). To use your own fixed
+  address instead, set `ISLICER_PUBLIC_URL`; to use your own ntfy server set `ISLICER_RENDEZVOUS`
+  on the bridge and change `RENDEZVOUS` in `src/services/pairing.ts`.
+- Anyone with the pairing code can print on your printer. Treat it like a password.
+- Recent Bambu firmware only accepts third-party LAN control with **LAN Only Mode** and
+  **Developer Mode** turned on at the printer.
+- Printing has not been verified end to end on real hardware in this build; slicing and the
+  remote link have.
 
-## Quick Start For Normal People
+## Quick start
 
-### 1. Download or install the bridge app
-
-Use the website download, or paste this one command on the Ubuntu/Mac computer that stays on near the printer:
+On the computer that stays on at home, on the same network as the printer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
 ```
 
-The bridge listens on port `8005`. The installer prints the setup URL for the computer and the exact bridge URL to paste into the iPhone app.
+(While this repository is private that link needs a login; copy the `server/` folder to the
+computer and run `bash install.sh` in it instead.)
 
-### 2. Sign into Tailscale
+It installs Node.js, cloudflared and Bambu Studio, sets up a service that starts at boot, and
+prints the pairing QR code. Then:
 
-```bash
-sudo tailscale up
-tailscale ip -4
-```
+- Add the printer: `http://<computer>:8005/setup` (name, LAN IP, serial number, model, access code).
+- Show the pairing code again: `http://<computer>:8005/pair`.
+- Logs: `journalctl -u islicer-bridge -f`.
 
-In the iPhone app, open Settings, choose Tailscale, paste the `100.x.x.x` IP, and tap Test. The final URL will look like:
-
-```text
-http://100.x.x.x:8005
-```
-
-Tailscale does not require a special iOS cellular app port. The bridge app uses TCP `8005`; Tailscale itself may use UDP `41641` for direct peer-to-peer tunnels when available.
-
-### 3. Add your printer once on the bridge
-
-Open the bridge setup page on the computer that can reach the printer:
-
-```text
-http://localhost:8005/setup
-```
-
-Or use the Tailscale/ LAN URL printed by the installer:
-
-```text
-http://100.x.x.x:8005/setup
-```
-
-Enter:
-
-- Name
-- Local printer IP
-- Serial number
-- Model
-- LAN access code
-
-The printer credentials stay on the bridge computer. The iPhone app does not ask for the printer IP or LAN access code.
-
-### 4. Print from anywhere
-
-Open Files, import or download an STL/3MF, slice it, and tap Send to Printer. The phone sends the model to the bridge; the bridge slices and talks to the printer.
+Bridge settings (environment variables): `PORT`, `ISLICER_REMOTE=off` (home network only),
+`ISLICER_PUBLIC_URL`, `ISLICER_RENDEZVOUS`, `BAMBU_STUDIO_PATH` + `BAMBU_PROFILES_DIR`, `CLOUDFLARED_PATH`.
+If Bambu Studio is missing the bridge falls back to CuraEngine with generic profiles.
 
 ## Build The iOS App
 
@@ -97,13 +74,17 @@ For simulator/device development:
 
 ```bash
 npm install
-npx expo run:ios
+npx expo prebuild -p ios
+cd ios && RCT_USE_PREBUILT_RNCORE=0 RCT_USE_RN_DEP=0 LANG=en_US.UTF-8 pod install
 ```
+
+Then open `ios/iSlicer.xcworkspace`. `plugins/withPodMinimumTarget.js` applies two build fixes
+needed on current Xcode. The app icon comes from `scripts/make_icon.py`.
 
 For archive deployment:
 
 ```bash
-open ios/BambuSlicer.xcworkspace
+open ios/iSlicer.xcworkspace
 ```
 
 In Xcode, select a signing team, choose a real device or generic iOS device, then Product -> Archive. Distribute through TestFlight, Ad Hoc, or your Apple Developer workflow.
@@ -159,8 +140,10 @@ The site is plain HTML/CSS/JS and can be hosted on GitHub Pages, Netlify, Vercel
 
 ```text
 GET    /health
+GET    /pair            (home network only)
+GET    /pair/terminal   (home network only)
 GET    /printers
-GET    /setup
+GET    /setup           (home network only)
 POST   /printers
 DELETE /printers/:id
 POST   /printers/:id/test

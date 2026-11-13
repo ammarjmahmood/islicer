@@ -8,10 +8,13 @@ const fs = require('fs');
 const os = require('os');
 const ftp = require('basic-ftp');
 const mqtt = require('mqtt');
+const QRCode = require('qrcode');
+const bambuSlicer = require('./bambu-slicer');
+const remote = require('./remote');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8005);
-const VERSION = '2.0.0';
+const VERSION = '3.0.0';
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
@@ -27,7 +30,6 @@ for (const dir of [UPLOAD_DIR, GCODE_DIR, DATA_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-app.use('/gcode', express.static(GCODE_DIR));
 
 const upload = multer({
   dest: UPLOAD_DIR,
@@ -282,6 +284,7 @@ function setupPageHtml() {
     <main>
       <header>
         <h1>iSlicer Bridge Setup</h1>
+        <p><a href="/pair" style="color:inherit">Pair your phone: show the QR code &rarr;</a></p>
         <p>This is the desktop-side setup. Only the bridge needs printer LAN details. The iPhone only needs the bridge URL.</p>
       </header>
 
@@ -465,6 +468,14 @@ function findCuraDefinition() {
   ].filter(Boolean);
 
   return possiblePaths.find((p) => fs.existsSync(p)) || null;
+}
+
+/** Bambu Studio when it is installed (real Bambu profiles), otherwise CuraEngine. */
+function bestEngine() {
+  const bambu = bambuSlicer.status();
+  if (bambu.available) return bambu;
+  const cura = engineStatus();
+  return cura.available ? cura : bambu;
 }
 
 function engineStatus() {
@@ -651,6 +662,43 @@ async function testPrinter(printer) {
   await publishPrinterCommand(printer, payload);
 }
 
+/** Sends a sliced Bambu project (.gcode.3mf) and starts plate 1. */
+async function printProject(printer, filePath, originalName, options = {}) {
+  if (!fs.existsSync(filePath)) throw new Error('Sliced file not found on bridge. Re-slice and try again.');
+  const base = path.parse(sanitizeModelName(originalName, 'print.stl')).name.slice(0, 40);
+  const targetFileName = `${base}_${Date.now()}.gcode.3mf`.replace(/_+/g, '_');
+  await uploadToPrinter(printer, filePath, targetFileName);
+
+  // X1 printers read from the FTP root; P1 and A1 printers read from the SD card path.
+  const isX1 = /^X1/.test(printer.model || '');
+  const useAms = Boolean(options.useAms ?? printer.useAms ?? false);
+  const payload = {
+    print: {
+      sequence_id: String(Date.now()),
+      command: 'project_file',
+      param: 'Metadata/plate_1.gcode',
+      project_id: '0',
+      profile_id: '0',
+      task_id: '0',
+      subtask_id: '0',
+      subtask_name: base,
+      file: '',
+      url: isX1 ? `ftp:///${targetFileName}` : `file:///sdcard/${targetFileName}`,
+      md5: '',
+      timelapse: false,
+      bed_type: 'auto',
+      bed_levelling: options.bedLevelling !== false,
+      flow_cali: true,
+      vibration_cali: true,
+      layer_inspect: false,
+      use_ams: useAms,
+      ams_mapping: useAms ? [Number(options.amsSlot || 0)] : [],
+    },
+  };
+  await publishPrinterCommand(printer, payload);
+  return { targetFileName };
+}
+
 async function printGcode(printer, gcodePath, originalName) {
   if (!fs.existsSync(gcodePath)) throw new Error('G-code file not found on bridge.');
 
@@ -669,6 +717,101 @@ async function printGcode(printer, gcodePath, originalName) {
   return { targetFileName };
 }
 
+// ---- Pairing and access ------------------------------------------------------
+
+/** The pairing code is made once and kept; the phone derives everything from it. */
+function pairingCode() {
+  const config = readConfig();
+  if (!config.pairingCode) {
+    config.pairingCode = remote.newCode();
+    writeConfig(config);
+  }
+  return config.pairingCode;
+}
+
+const PAIRING = remote.derive(pairingCode());
+
+function isPrivateAddress(address) {
+  const ip = String(address || '').replace(/^::ffff:/, '');
+  return ip === '127.0.0.1' || ip === '::1' || /^10\./.test(ip) || /^192\.168\./.test(ip)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(ip) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip) || /^f[cd]/i.test(ip);
+}
+
+/** True for requests that arrived through the public tunnel rather than from the home network. */
+function cameThroughTunnel(req) {
+  return Boolean(req.headers['cf-connecting-ip'] || req.headers['cf-ray'] || req.headers['x-forwarded-for']);
+}
+
+function hasToken(req) {
+  const header = String(req.headers.authorization || '');
+  const given = header.startsWith('Bearer ') ? header.slice(7) : String(req.query.access_token || '');
+  if (given.length !== PAIRING.token.length) return false;
+  return require('crypto').timingSafeEqual(Buffer.from(given), Buffer.from(PAIRING.token));
+}
+
+// Setup pages show printer details and the pairing code: home network only, never the tunnel.
+const HOME_ONLY = [/^\/$/, /^\/setup/, /^\/pair/];
+
+app.use((req, res, next) => {
+  const local = isPrivateAddress(req.socket.remoteAddress) && !cameThroughTunnel(req);
+  if (HOME_ONLY.some((pattern) => pattern.test(req.path))) {
+    if (local) return next();
+    return res.status(403).json({ error: 'Open this page from a computer on the same network as the bridge.' });
+  }
+  if (local || hasToken(req)) return next();
+  res.status(401).json({ error: 'This phone is not paired with the bridge. Scan the pairing code again.' });
+});
+
+app.use('/gcode', express.static(GCODE_DIR));
+
+let link = { state: { url: null, status: 'off', note: null } };
+
+app.get('/pair', async (_req, res, next) => {
+  try {
+    const code = pairingCode();
+    const qr = await QRCode.toString(`islicer://pair?c=${code}`, { type: 'svg', margin: 1, width: 260 });
+    res.type('html').send(pairPageHtml(code, qr));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The same code as text, for the installer to print in a terminal.
+app.get('/pair/terminal', async (_req, res, next) => {
+  try {
+    const code = pairingCode();
+    const qr = await QRCode.toString(`islicer://pair?c=${code}`, { type: 'terminal', small: true });
+    res.type('text').send(`${qr}\nOr type this code in the app:  ${code}\n`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/pair/status', (_req, res) => {
+  res.json({ status: link.state.status, note: link.state.note, online: link.state.status === 'online' });
+});
+
+function pairPageHtml(code, qrSvg) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pair your phone</title><style>
+body{font:17px -apple-system,system-ui,Segoe UI,sans-serif;background:#0b0c0f;color:#f3f4f6;margin:0;display:grid;place-items:center;min-height:100vh}
+main{max-width:420px;padding:28px;text-align:center}h1{font-size:26px;margin:0 0 6px}p{color:#a5acb8;line-height:1.45}
+.qr{background:#fff;border-radius:22px;padding:14px;display:inline-block;margin:18px 0}.code{font:600 26px ui-monospace,Menlo,monospace;letter-spacing:2px;color:#34d399}
+.pill{display:inline-block;border-radius:999px;padding:6px 14px;font-size:14px;background:#1f2430;margin-top:14px}a{color:#34d399}
+</style></head><body><main>
+<h1>Pair your phone</h1>
+<p>Open iSlicer on your iPhone and scan this code. You only do this once.</p>
+<div class="qr">${qrSvg}</div>
+<p>Or type this code in the app:</p><div class="code">${code}</div>
+<div class="pill" id="pill">Checking remote access…</div>
+<p style="margin-top:22px;font-size:14px">Next: <a href="/setup">add your printer</a>. Keep this code private: anyone with it can print on your printer.</p>
+<script>
+async function tick(){try{const r=await fetch('/pair/status');const s=await r.json();
+document.getElementById('pill').textContent=s.online?'Remote access: ready, works from anywhere':(s.note||'Remote access: '+s.status);}catch(e){}}
+tick();setInterval(tick,4000);
+</script></main></body></html>`;
+}
+
 app.get('/health', (_req, res) => {
   const config = readConfig();
   res.json({
@@ -677,7 +820,9 @@ app.get('/health', (_req, res) => {
     version: VERSION,
     port: PORT,
     localAddresses: getLocalAddresses(),
-    engine: engineStatus(),
+    engine: bestEngine(),
+    options: bambuSlicer.listOptions(),
+    remote: { status: link.state.status },
     printers: config.printers.map((printer) => publicPrinter(printer)),
   });
 });
@@ -750,7 +895,8 @@ app.post('/slice', upload.single('model'), async (req, res, next) => {
     const jobId = uuidv4();
     const ext = path.extname(filename).toLowerCase();
     const modelPath = path.join(UPLOAD_DIR, `${jobId}${ext}`);
-    const gcodePath = path.join(GCODE_DIR, `${jobId}.gcode`);
+    const useBambu = bambuSlicer.status().available;
+    const gcodePath = path.join(GCODE_DIR, useBambu ? `${jobId}.gcode.3mf` : `${jobId}.gcode`);
 
     fs.renameSync(req.file.path, modelPath);
 
@@ -767,14 +913,18 @@ app.post('/slice', upload.single('model'), async (req, res, next) => {
     res.json({ jobId, statusUrl: `/status/${jobId}` });
 
     try {
-      const stats = await sliceWithCura(modelPath, gcodePath, settings);
+      const stats = useBambu
+        ? await bambuSlicer.slice(modelPath, GCODE_DIR, jobId, settings)
+        : await sliceWithCura(modelPath, gcodePath, settings);
+      const { filePath: _filePath, ...publicStats } = stats;
       setJob(jobId, {
         ...jobs.get(jobId),
         status: 'done',
         progress: 100,
-        gcodeUrl: `/gcode/${jobId}.gcode`,
+        engine: useBambu ? 'bambu-studio' : 'cura',
+        gcodeUrl: `/gcode/${path.basename(gcodePath)}`,
         completedAt: Date.now(),
-        ...stats,
+        ...publicStats,
       });
     } catch (err) {
       setJob(jobId, {
@@ -820,7 +970,9 @@ app.post('/print', async (req, res, next) => {
       return;
     }
 
-    const result = await printGcode(printer, job.gcodePath, job.filename);
+    const result = String(job.gcodePath).endsWith('.3mf')
+      ? await printProject(printer, job.gcodePath, job.filename, req.body)
+      : await printGcode(printer, job.gcodePath, job.filename);
     res.json({ ok: true, ...result });
   } catch (err) {
     next(err);
@@ -832,10 +984,18 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: err.message || 'Unexpected server error.' });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  const engine = engineStatus();
-  console.log(`BambuSlicer Bridge ${VERSION} running on port ${PORT}`);
-  console.log(`Engine: ${engine.available ? `${engine.name} (${engine.executable})` : 'not ready'}`);
-  if (engine.note) console.log(`Engine note: ${engine.note}`);
-  console.log(`Data dir: ${DATA_DIR}`);
+app.listen(PORT, '0.0.0.0', async () => {
+  const engine = bestEngine();
+  const code = pairingCode();
+  console.log(`iSlicer Bridge ${VERSION} running on port ${PORT}`);
+  console.log(`Slicer: ${engine.available ? `${engine.name} (${engine.executable})` : 'not ready'}`);
+  if (engine.note) console.log(`Slicer note: ${engine.note}`);
+  console.log(`\nPair your phone: open http://localhost:${PORT}/pair, or scan this in the iSlicer app:\n`);
+  try {
+    console.log(await QRCode.toString(`islicer://pair?c=${code}`, { type: 'terminal', small: true }));
+  } catch {}
+  console.log(`Pairing code: ${code}\n`);
+  if (process.env.ISLICER_REMOTE !== 'off') {
+    link = remote.start({ port: PORT, code });
+  }
 });

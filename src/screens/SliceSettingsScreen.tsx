@@ -16,6 +16,43 @@ import { PRESETS } from '../constants/presets';
 import { SliceSettings, SlicePreset, ModelFile } from '../types';
 import { getModels } from '../services/storage';
 import { startSliceJob } from '../services/slicer';
+import { getBridgePrinters } from '../services/bambu';
+
+function ChipRow({
+  options,
+  labels = {},
+  value,
+  onChange,
+}: {
+  options: string[];
+  labels?: Record<string, string>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+      {options.map((option) => {
+        const selected = option === value;
+        return (
+          <TouchableOpacity
+            key={option}
+            onPress={() => onChange(option)}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 9,
+              borderRadius: 999,
+              backgroundColor: selected ? COLORS.primary : COLORS.surface,
+            }}
+          >
+            <Text style={{ color: selected ? '#fff' : COLORS.text, fontWeight: '600', fontSize: 14 }}>
+              {labels[option] || option}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
 
 function SettingRow({
   label,
@@ -61,6 +98,12 @@ export default function SliceSettingsScreen() {
 
   useEffect(() => {
     loadModel();
+    // Slice for the printer that is set up on the bridge.
+    getBridgePrinters()
+      .then((printers) => {
+        if (printers[0]) setSettings((prev) => ({ ...prev, printerModel: prev.printerModel || printers[0].model }));
+      })
+      .catch(() => {});
   }, []);
 
   async function loadModel() {
@@ -71,7 +114,7 @@ export default function SliceSettingsScreen() {
 
   function selectPreset(preset: SlicePreset) {
     setSelectedPreset(preset);
-    setSettings({ ...preset.settings });
+    setSettings((prev) => ({ ...preset.settings, printerModel: prev.printerModel, filament: prev.filament }));
   }
 
   function updateSetting<K extends keyof SliceSettings>(key: K, value: SliceSettings[K]) {
@@ -144,6 +187,20 @@ export default function SliceSettingsScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        <Text style={styles.sectionTitle}>Printer</Text>
+        <ChipRow
+          options={['P1S', 'P1P', 'X1C', 'X1', 'A1', 'A1Mini']}
+          labels={{ A1Mini: 'A1 mini' }}
+          value={settings.printerModel || 'P1S'}
+          onChange={(value) => updateSetting('printerModel', value as SliceSettings['printerModel'])}
+        />
+        <Text style={styles.sectionTitle}>Filament</Text>
+        <ChipRow
+          options={['PLA', 'PLA Matte', 'PETG', 'ABS', 'ASA', 'TPU']}
+          value={settings.filament || 'PLA'}
+          onChange={(value) => updateSetting('filament', value as SliceSettings['filament'])}
+        />
 
         {/* Key Settings */}
         <Text style={styles.sectionTitle}>Key Settings</Text>

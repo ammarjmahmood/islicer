@@ -11,6 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS } from '../constants/theme';
 import { getSliceServerUrl, setSliceServerUrl } from '../services/storage';
+import PairingCard from '../components/PairingCard';
 
 type ServerMode = 'tailscale' | 'local' | 'custom';
 type ServerStatus = 'unknown' | 'online' | 'offline';
@@ -123,7 +124,13 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionTitle}>Bridge</Text>
+        <Text style={styles.sectionTitle}>Your computer</Text>
+        <PairingCard />
+
+        <Text style={styles.sectionTitle}>Advanced: manual bridge address</Text>
+        <Text style={[styles.cardDescription, { marginBottom: SPACING.sm }]}>
+          Only needed if you are not using a pairing code (for example, Tailscale or your own domain).
+        </Text>
 
         <View style={styles.statusBar}>
           {testing ? (
@@ -206,24 +213,17 @@ export default function SettingsScreen() {
             </Text>
           </View>
           <Text style={styles.cardDescription}>
-            Run this on the Mac, Ubuntu box, mini PC, or laptop that stays on near your Bambu printer. If the bridge laptop leaves home, it needs a VPN route back to the printer LAN.
+            Run this on the Mac, Ubuntu box or mini PC that stays on at home on the same network as your Bambu printer.
           </Text>
 
-          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>2. Connect Tailscale</Text>
+          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>2. Add your printer</Text>
           <Text style={styles.cardDescription}>
-            Sign into the same Tailscale account on the bridge and your iPhone, then paste the bridge IP above.
+            On that computer, open the bridge page it prints (http://localhost:8005/setup) and add the printer. The iPhone never needs the printer IP or access code.
           </Text>
 
-          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Add your printer</Text>
+          <Text style={[styles.stepTitle, { marginTop: SPACING.md }]}>3. Pair this phone</Text>
           <Text style={styles.cardDescription}>
-            Open the bridge setup page on that computer and add the printer there. The iPhone never needs the printer LAN IP or access code.
-          </Text>
-        </View>
-
-        <Text style={styles.sectionTitle}>Remote Printing</Text>
-        <View style={styles.card}>
-          <Text style={styles.cardDescription}>
-            Your iPhone only needs to reach the bridge. The bridge must be at home with the printer or connected to your home LAN through VPN/subnet routing, so Tailscale works from cellular, work Wi-Fi, and travel networks.
+            Open http://localhost:8005/pair on that computer and scan the code above. Done once, it works from anywhere: home Wi-Fi, cellular, or travelling.
           </Text>
         </View>
 
@@ -231,7 +231,7 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <View style={styles.aboutRow}>
             <Text style={styles.aboutLabel}>Version</Text>
-            <Text style={styles.aboutValue}>2.0.0</Text>
+            <Text style={styles.aboutValue}>3.0.0</Text>
           </View>
           <View style={styles.aboutRow}>
             <Text style={styles.aboutLabel}>Printers</Text>

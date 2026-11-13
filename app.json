@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "BambuSlicer",
+    "name": "iSlicer",
     "slug": "bambu-slicer",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,12 +13,14 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.bambuslicer.app",
+      "bundleIdentifier": "com.ammarjmahmood.islicer",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
           "NSAllowsLocalNetworking": true
-        }
+        },
+        "NSCameraUsageDescription": "iSlicer uses the camera to scan the pairing code on your bridge computer.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -32,6 +34,17 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "scheme": "islicer",
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "iSlicer uses the camera to scan the pairing code on your bridge computer.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "./plugins/withPodMinimumTarget"
+    ]
   }
 }

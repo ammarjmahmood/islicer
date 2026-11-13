@@ -2,6 +2,7 @@ import { Paths, File, Directory } from 'expo-file-system';
 import { SliceSettings, SliceJob } from '../types';
 import { saveSliceJob } from './storage';
 import { resolveBridgeUrl } from './bridge';
+import { authHeaders, getAccessToken } from './pairing';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -10,7 +11,7 @@ async function finishSliceJob(job: SliceJob, serverUrl: string, serverJobId: str
     let remoteStatus: any = null;
     const startedPolling = Date.now();
     while (Date.now() - startedPolling < 20 * 60 * 1000) {
-      const statusResponse = await fetch(`${serverUrl}/status/${serverJobId}`);
+      const statusResponse = await fetch(`${serverUrl}/status/${serverJobId}`, { headers: await authHeaders() });
       if (!statusResponse.ok) {
         throw new Error(await statusResponse.text());
       }
@@ -32,7 +33,9 @@ async function finishSliceJob(job: SliceJob, serverUrl: string, serverJobId: str
 
     const gcodeDir = new Directory(Paths.document, 'gcode');
     gcodeDir.create();
-    const downloaded = await File.downloadFileAsync(`${serverUrl}${remoteStatus.gcodeUrl}`, gcodeDir);
+    const token = await getAccessToken();
+    const downloadUrl = `${serverUrl}${remoteStatus.gcodeUrl}${token ? `?access_token=${token}` : ''}`;
+    const downloaded = await File.downloadFileAsync(downloadUrl, gcodeDir);
 
     job.status = 'done';
     job.progress = 100;
@@ -88,6 +91,7 @@ export async function startSliceJob(
 
     const response = await fetch(`${serverUrl}/slice`, {
       method: 'POST',
+      headers: await authHeaders(),
       body: formData,
     });
 
@@ -117,7 +121,7 @@ export async function pollSliceStatus(
 ): Promise<SliceJob | null> {
   try {
     const serverUrl = await resolveBridgeUrl();
-    const response = await fetch(`${serverUrl}/status/${jobId}`);
+    const response = await fetch(`${serverUrl}/status/${jobId}`, { headers: await authHeaders() });
     const data = await response.json();
     onProgress(data.progress || 0);
     return data;

@@ -23,6 +23,11 @@ export interface SliceSettings {
   temperature: number;
   bedTemperature: number;
   fanSpeed: number;
+  /** Which Bambu printer profile to slice for. */
+  printerModel?: PrinterConfig['model'];
+  /** Filament family; the bridge picks the matching Bambu profile. */
+  filament?: 'PLA' | 'PLA Matte' | 'PETG' | 'ABS' | 'ASA' | 'TPU';
+  bedType?: 'textured' | 'smooth' | 'cool' | 'engineering';
 }
 
 export interface SlicePreset {

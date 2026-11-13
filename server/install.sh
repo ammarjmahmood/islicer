@@ -1,178 +1,172 @@
 #!/bin/bash
+# iSlicer Bridge: one-command install for the always-on computer at home
+# (Ubuntu / Debian, or a Mac). It sets up everything the phone needs:
+#   - Node.js              runs the bridge
+#   - Bambu Studio         does the slicing, with Bambu's own profiles
+#   - cloudflared          makes the bridge reachable from anywhere, no router setup
+#   - a background service so it starts with the computer
+# Then it prints a QR code. Scan it in the iSlicer app and you are done.
+#
+# Usage:  curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
+# Or, from a copy of this repo:  bash server/install.sh
 set -e
 
-# BambuSlicer Bridge — One-command install
-# Usage: curl -fsSL https://raw.githubusercontent.com/ammarjmahmood/islicer/main/server/install.sh | bash
+PORT="${PORT:-8005}"
+SERVICE_NAME="islicer-bridge"
+SHARE_DIR="$HOME/.local/share/islicer"
+REPO_URL="https://github.com/ammarjmahmood/islicer.git"
 
-INSTALL_DIR="$HOME/bambu-slicer-server"
-SERVICE_NAME="bambu-slicer"
-PORT=8005
+say()  { printf '\n\033[1;32m==>\033[0m %s\n' "$1"; }
+warn() { printf '\033[1;33m[!]\033[0m %s\n' "$1"; }
 
-echo "================================================"
-echo "  BambuSlicer Bridge Installer"
-echo "================================================"
-echo ""
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+SUDO=""
+[ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null && SUDO="sudo"
 
-# Check for Node.js
-if ! command -v node &>/dev/null; then
-    echo "[!] Node.js not found. Installing..."
-    if command -v apt-get &>/dev/null; then
-        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-        sudo apt-get install -y nodejs
-    elif command -v brew &>/dev/null; then
+# ---- where the bridge code lives -------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/index.js" ] && [ -f "$SCRIPT_DIR/bambu-slicer.js" ]; then
+    BRIDGE_DIR="$SCRIPT_DIR"                      # running from a copy of the repo
+else
+    say "Downloading iSlicer Bridge"
+    command -v git >/dev/null || { [ "$OS" = Linux ] && $SUDO apt-get update -qq && $SUDO apt-get install -y -qq git; }
+    if [ -d "$HOME/islicer/.git" ]; then
+        git -C "$HOME/islicer" pull --ff-only || true
+    else
+        git clone --depth 1 "$REPO_URL" "$HOME/islicer"
+    fi
+    BRIDGE_DIR="$HOME/islicer/server"
+fi
+
+# ---- Node.js ---------------------------------------------------------------
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
+    say "Installing Node.js"
+    if [ "$OS" = Linux ]; then
+        curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
+        $SUDO apt-get install -y -qq nodejs
+    elif command -v brew >/dev/null; then
         brew install node
     else
-        echo "ERROR: Can't install Node.js automatically."
-        echo "Install it from https://nodejs.org and re-run this script."
-        exit 1
+        echo "Install Node.js 20 or newer from https://nodejs.org, then run this again."; exit 1
     fi
 fi
-echo "[✓] Node.js $(node --version)"
+echo "Node.js $(node --version)"
 
-# Install CuraEngine. The bridge refuses to fake a slice; if CuraEngine or
-# its printer definitions are missing, /health will explain what to install.
-if ! command -v CuraEngine &>/dev/null; then
-    echo "[!] CuraEngine not found. Installing..."
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update
-        sudo apt-get install -y curaengine 2>/dev/null || echo "[!] CuraEngine not in apt — install Cura or set CURA_ENGINE_PATH manually"
-    elif command -v brew &>/dev/null; then
-        brew install curaengine 2>/dev/null || echo "[!] CuraEngine not in brew — install Cura or set CURA_ENGINE_PATH manually"
+# ---- cloudflared (remote access) ---------------------------------------------
+if ! command -v cloudflared >/dev/null; then
+    say "Installing cloudflared (lets your phone reach this computer from anywhere)"
+    if [ "$OS" = Linux ]; then
+        case "$ARCH" in x86_64) CF=amd64 ;; aarch64|arm64) CF=arm64 ;; *) CF="" ;; esac
+        if [ -n "$CF" ]; then
+            curl -fsSL -o /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF.deb"
+            $SUDO dpkg -i /tmp/cloudflared.deb && rm -f /tmp/cloudflared.deb
+        fi
+    elif command -v brew >/dev/null; then
+        brew install cloudflared
     fi
 fi
-if command -v CuraEngine &>/dev/null; then
-    echo "[✓] CuraEngine installed"
+command -v cloudflared >/dev/null && echo "cloudflared ready" || warn "cloudflared is missing: the phone will only work on your home Wi-Fi."
+
+# ---- Bambu Studio (the slicer) -----------------------------------------------
+if [ "$OS" = Linux ]; then
+    if [ ! -x "$SHARE_DIR/bambustudio/AppRun" ]; then
+        say "Installing Bambu Studio (about 250 MB)"
+        if [ "$ARCH" != x86_64 ]; then
+            warn "Bambu Studio only ships for 64-bit Intel/AMD Linux. On this computer ($ARCH) slicing will not work."
+        else
+            # A screenless computer still needs a virtual display and a few libraries for the slicer to start.
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq xvfb curl squashfs-tools libgl1 libegl1 libgtk-3-0 libwebkit2gtk-4.1-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 >/dev/null 2>&1 \
+              || $SUDO apt-get install -y -qq xvfb curl squashfs-tools libgl1 libegl1 libgtk-3-0 >/dev/null 2>&1 || true
+            UBU="ubu24"
+            . /etc/os-release 2>/dev/null || true
+            case "${VERSION_ID:-}" in 20.*|22.*|11|12) UBU="ubu22" ;; esac
+            ASSET_URL="$(curl -fsSL https://api.github.com/repos/bambulab/BambuStudio/releases/latest \
+              | grep -o '"browser_download_url": *"[^"]*'"$UBU"'[^"]*\.AppImage"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')"
+            if [ -z "$ASSET_URL" ]; then
+                warn "Could not find a Bambu Studio download for this system. Install Bambu Studio yourself and set BAMBU_STUDIO_PATH."
+            else
+                mkdir -p "$SHARE_DIR"
+                curl -fL --progress-bar -o "$SHARE_DIR/BambuStudio.AppImage" "$ASSET_URL"
+                chmod +x "$SHARE_DIR/BambuStudio.AppImage"
+                # Unpack it, so it runs without FUSE and the bridge can read its printer profiles.
+                # (The AppImage's own --appimage-extract fails on some systems; unsquashfs is reliable.)
+                (
+                    cd "$SHARE_DIR" && rm -rf squashfs-root bambustudio
+                    OFFSET="$(./BambuStudio.AppImage --appimage-offset 2>/dev/null | tail -1)"
+                    if unsquashfs -q -n -o "$OFFSET" -d bambustudio BambuStudio.AppImage >/dev/null 2>&1; then :
+                    elif ./BambuStudio.AppImage --appimage-extract >/dev/null 2>&1; then mv squashfs-root bambustudio
+                    fi
+                    [ -x bambustudio/AppRun ] && rm -f BambuStudio.AppImage
+                )
+            fi
+        fi
+    fi
+    [ -x "$SHARE_DIR/bambustudio/AppRun" ] && echo "Bambu Studio ready"
 else
-    echo "[!] CuraEngine not available — install it before slicing"
+    [ -d "/Applications/BambuStudio.app" ] && echo "Bambu Studio ready" \
+      || warn "Install Bambu Studio from https://bambulab.com/download/studio so the bridge can slice."
 fi
 
-# Check for Tailscale
-TAILSCALE_IP=""
-if command -v tailscale &>/dev/null; then
-    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
-    if [ -n "$TAILSCALE_IP" ]; then
-        echo "[✓] Tailscale IP: $TAILSCALE_IP"
-    else
-        echo "[!] Tailscale installed but not connected. Run: sudo tailscale up"
-    fi
-else
-    echo "[!] Tailscale not installed."
-    echo "    Install it for remote access: https://tailscale.com/download"
-    echo "    Without Tailscale, the server only works on your local network."
-fi
+# ---- the bridge itself ---------------------------------------------------------
+say "Installing the bridge"
+cd "$BRIDGE_DIR"
+npm install --omit=dev --no-audit --no-fund --silent
 
-# Clone or update
-if [ -d "$INSTALL_DIR" ]; then
-    echo "[*] Updating existing installation..."
-    cd "$INSTALL_DIR"
-    git pull 2>/dev/null || true
-else
-    echo "[*] Downloading BambuSlicer Bridge..."
-    # If running from curl pipe, clone the repo
-    if [ -d "$(dirname "$0")/package.json" ] 2>/dev/null; then
-        # Running from local copy
-        INSTALL_DIR="$(dirname "$0")"
-    else
-        git clone https://github.com/ammarjmahmood/islicer.git "$INSTALL_DIR" 2>/dev/null || {
-            # Fallback: just create the directory and download server files
-            mkdir -p "$INSTALL_DIR"
-            cd "$INSTALL_DIR"
-            cat > package.json << 'PKGJSON'
-{
-  "name": "bambu-slicer-server",
-  "version": "2.0.0",
-  "description": "Always-on BambuSlicer bridge",
-  "main": "index.js",
-  "scripts": { "start": "node index.js" },
-  "dependencies": {
-    "basic-ftp": "^6.0.1",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "mqtt": "^5.15.1",
-    "multer": "^1.4.5-lts.1",
-    "uuid": "^9.0.0"
-  }
-}
-PKGJSON
-            echo "ERROR: Could not clone repo. Place server files in $INSTALL_DIR manually."
-            exit 1
-        }
-        INSTALL_DIR="$INSTALL_DIR/server"
-    fi
-fi
-
-cd "$INSTALL_DIR"
-
-# Install dependencies
-echo "[*] Installing dependencies..."
-npm install --production --silent
-
-# Create systemd service (Linux)
-if command -v systemctl &>/dev/null; then
-    echo "[*] Setting up systemd service..."
-    sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
+if [ "$OS" = Linux ] && command -v systemctl >/dev/null; then
+    $SUDO tee "/etc/systemd/system/$SERVICE_NAME.service" >/dev/null <<EOF
 [Unit]
-Description=BambuSlicer Bridge
-After=network.target tailscaled.service
-Wants=tailscaled.service
+Description=iSlicer Bridge
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$(which node) index.js
+WorkingDirectory=$BRIDGE_DIR
+ExecStart=$(command -v node) index.js
 Restart=always
 RestartSec=5
 Environment=PORT=$PORT
 Environment=NODE_ENV=production
+Environment=HOME=$HOME
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    sudo systemctl daemon-reload
-    sudo systemctl enable ${SERVICE_NAME}
-    sudo systemctl restart ${SERVICE_NAME}
-
-    echo "[✓] Service installed and started"
-    echo ""
-    sleep 2
-    if systemctl is-active --quiet ${SERVICE_NAME}; then
-        echo "================================================"
-        echo "  BambuSlicer Bridge is RUNNING"
-        echo "================================================"
-        echo ""
-        echo "  Local:     http://localhost:$PORT"
-        LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-        [ -n "$LOCAL_IP" ] && echo "  Network:   http://$LOCAL_IP:$PORT"
-        [ -n "$TAILSCALE_IP" ] && echo "  Tailscale: http://$TAILSCALE_IP:$PORT"
-        echo ""
-        echo "  Add printers on this bridge:"
-        echo "    http://localhost:$PORT/setup"
-        [ -n "$TAILSCALE_IP" ] && echo "    http://$TAILSCALE_IP:$PORT/setup"
-        echo ""
-        echo "  In the BambuSlicer iOS app, go to Settings"
-        echo "  and enter the Tailscale URL above."
-        echo ""
-        echo "  Commands:"
-        echo "    sudo systemctl status $SERVICE_NAME"
-        echo "    sudo systemctl stop $SERVICE_NAME"
-        echo "    sudo systemctl restart $SERVICE_NAME"
-        echo "    journalctl -u $SERVICE_NAME -f"
-        echo ""
-    else
-        echo "[!] Service failed to start. Check: journalctl -u $SERVICE_NAME"
-    fi
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable -q "$SERVICE_NAME"
+    $SUDO systemctl restart "$SERVICE_NAME"
+    STARTED="service"
 else
-    # No systemd (macOS or older Linux) — just run it
-    echo ""
-    echo "================================================"
-    echo "  BambuSlicer Bridge installed"
-    echo "================================================"
-    echo ""
-    echo "  Start with: cd $INSTALL_DIR && node index.js"
-    echo "  Add printers at: http://localhost:$PORT/setup"
-    echo ""
-    [ -n "$TAILSCALE_IP" ] && echo "  Tailscale URL: http://$TAILSCALE_IP:$PORT"
-    echo ""
+    # macOS, or Linux without systemd: run it in the background for now.
+    (PORT="$PORT" nohup node index.js >"$BRIDGE_DIR/bridge.log" 2>&1 &)
+    STARTED="background"
+fi
+
+# ---- show the pairing code -----------------------------------------------------
+for _ in $(seq 1 20); do
+    curl -fsS "http://localhost:$PORT/pair/terminal" >/tmp/islicer-pair.txt 2>/dev/null && break
+    sleep 1
+done
+
+say "iSlicer Bridge is running"
+if [ -s /tmp/islicer-pair.txt ]; then
+    echo "Open the iSlicer app on your iPhone and scan this code:"
+    echo
+    cat /tmp/islicer-pair.txt
+    rm -f /tmp/islicer-pair.txt
+else
+    warn "The bridge did not answer yet. Check: journalctl -u $SERVICE_NAME -n 30"
+fi
+LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+echo
+echo "Next, add your printer (from this computer or any device on your home Wi-Fi):"
+echo "    http://${LAN_IP:-localhost}:$PORT/setup"
+echo "Show the pairing code again any time:"
+echo "    http://${LAN_IP:-localhost}:$PORT/pair"
+if [ "$STARTED" = service ]; then
+    echo
+    echo "It starts by itself when this computer boots. Logs: journalctl -u $SERVICE_NAME -f"
 fi
