@@ -108,4 +108,4 @@ function buildPlate(items, outPath) {
   return { min, max, triangles: parts.reduce((sum, part) => sum + part.length / 9, 0) };
 }
 
-module.exports = { buildPlate, readSTL, bounds };
+module.exports = { buildPlate, readSTL, bounds, place };

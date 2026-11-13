@@ -111,6 +111,27 @@ function listOptions() {
   return { printers: Object.keys(MACHINES), filaments: Object.keys(FILAMENTS), layerHeights: [0.08, 0.12, 0.16, 0.2, 0.24, 0.28], bedTypes: Object.keys(BED_TYPES) };
 }
 
+/** Finds Bambu's filament profile for this printer, e.g. "PETG" -> "Bambu PETG HF @BBL P1S". */
+function pickFilament(filaments, machine, machineName, suffix, key) {
+  const defaultFilament = Array.isArray(machine.default_filament_profile)
+    ? machine.default_filament_profile[0] : machine.default_filament_profile;
+  const tail = defaultFilament.slice(defaultFilament.indexOf('@')); // "@BBL P1S 0.4 nozzle"
+  // Prefer a profile that itself lists this printer as compatible.
+  const compatible = (base) => [...filaments.values()].find((f) =>
+    f.instantiation === 'true' && f.name.startsWith(`${base} @`)
+    && Array.isArray(f.compatible_printers) && f.compatible_printers.includes(machineName));
+  let filamentName = null;
+  for (const base of [...(FILAMENTS[key] || []), 'Bambu PLA Basic']) {
+    const hit = compatible(base)
+      // The P1P has no filament profiles of its own; Bambu Studio uses the X1C ones for it.
+      || [`${base} ${tail}`, `${base} ${suffix}`, `${base} @BBL X1C`].map((name) => filaments.get(name)).find(Boolean);
+    if (hit) { filamentName = hit.name; break; }
+  }
+  if (!filamentName && filaments.has(defaultFilament)) filamentName = defaultFilament;
+  if (!filamentName) throw new Error(`No Bambu filament profile found for ${machineName}.`);
+  return { name: filamentName, json: flatten(filaments, filamentName) };
+}
+
 /** Picks and flattens the three profiles for a job, then applies the phone's choices. */
 function buildProfiles(profiles, settings) {
   const machines = loadCategory(profiles, 'machine');
@@ -143,26 +164,14 @@ function buildProfiles(profiles, settings) {
   else if (settings.adhesionType === 'none' || settings.adhesionType === 'skirt') processJson.brim_type = 'no_brim';
   if (settings.adhesionType === 'raft') processJson.raft_layers = '2';
 
-  // Filament: same family as the printer's default profile.
-  const defaultFilament = Array.isArray(machine.default_filament_profile)
-    ? machine.default_filament_profile[0] : machine.default_filament_profile;
-  const tail = defaultFilament.slice(defaultFilament.indexOf('@')); // "@BBL P1S 0.4 nozzle"
-  // Prefer a profile that itself lists this printer as compatible.
-  const compatible = (base) => [...filaments.values()].find((f) =>
-    f.instantiation === 'true' && f.name.startsWith(`${base} @`)
-    && Array.isArray(f.compatible_printers) && f.compatible_printers.includes(machineName));
-  let filamentName = null;
-  for (const base of [...(FILAMENTS[settings.filament] || []), 'Bambu PLA Basic']) {
-    const hit = compatible(base)
-      // The P1P has no filament profiles of its own; Bambu Studio uses the X1C ones for it.
-      || [`${base} ${tail}`, `${base} ${suffix}`, `${base} @BBL X1C`].map((name) => filaments.get(name)).find(Boolean);
-    if (hit) { filamentName = hit.name; break; }
-  }
-  if (!filamentName && filaments.has(defaultFilament)) filamentName = defaultFilament;
-  if (!filamentName) throw new Error(`No Bambu filament profile found for ${machineName}.`);
-  const filament = flatten(filaments, filamentName);
-
-  return { machine, process: processJson, filament, names: { machine: machineName, process: processJson.name, filament: filamentName } };
+  // Filaments: one per slot used on the plate (slot 1 first).
+  const slots = Array.isArray(settings.filaments) && settings.filaments.length
+    ? settings.filaments.slice(0, 16) : [settings.filament || 'PLA'];
+  const picked = slots.map((key) => pickFilament(filaments, machine, machineName, suffix, key));
+  const filament = picked[0].json;
+  const filamentList = picked.map((p) => p.json);
+  return { machine, process: processJson, filament, filaments: filamentList,
+    names: { machine: machineName, process: processJson.name, filament: picked.map((p) => p.name).join(' + ') } };
 }
 
 // ---- Slicing --------------------------------------------------------------
@@ -176,79 +185,176 @@ function hasCommand(name) {
   }
 }
 
-/**
- * Slices `modelPath` and writes `<outDir>/<jobId>.gcode.3mf`.
- * Resolves to { filePath, estimatedTime (seconds), estimatedFilament (grams), profiles }.
- */
-function slice(modelPath, outDir, jobId, settings = {}) {
-  return new Promise((resolve, reject) => {
-    const install = findInstall();
-    if (!install) {
-      reject(new Error(status().note));
-      return;
-    }
-    let built;
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'islicer-'));
-    try {
-      built = buildProfiles(install.profiles, settings);
-      for (const key of ['machine', 'process', 'filament']) {
-        fs.writeFileSync(path.join(work, `${key}.json`), JSON.stringify(built[key]));
-      }
-    } catch (err) {
-      reject(err);
-      return;
-    }
-
-    const outName = `${jobId}.gcode.3mf`;
-    const args = [
-      // A plate laid out in the app is printed exactly as placed; a single model is auto-placed.
-      '--slice', '0', '--arrange', settings.keepLayout ? '0' : '1',
-      '--orient', settings.keepLayout || settings.autoOrient === false ? '0' : '1',
-      '--load-settings', `${path.join(work, 'machine.json')};${path.join(work, 'process.json')}`,
-      '--load-filaments', path.join(work, 'filament.json'),
-      '--outputdir', work,
-      '--export-3mf', outName,
-      modelPath,
-    ];
-
-    // A Linux box with no screen attached still needs a display for the slicer to start.
-    let exe = install.exe;
-    let finalArgs = args;
-    if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY && hasCommand('xvfb-run')) {
-      exe = 'xvfb-run';
-      finalArgs = ['-a', install.exe, ...args];
-    }
-
+/** Runs Bambu Studio's command line. Resolves to its result.json (or {}). */
+function run(install, args, work) {
+  // A Linux box with no screen attached still needs a display for the slicer to start.
+  let exe = install.exe;
+  let finalArgs = args;
+  if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY && hasCommand('xvfb-run')) {
+    exe = 'xvfb-run';
+    finalArgs = ['-a', install.exe, ...args];
+  }
+  return new Promise((resolve) => {
     execFile(exe, finalArgs, { timeout: 30 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
-      const cleanup = () => fs.rmSync(work, { recursive: true, force: true });
       let result = {};
       try { result = JSON.parse(fs.readFileSync(path.join(work, 'result.json'), 'utf8')); } catch {}
-      const produced = path.join(work, outName);
-      if (!fs.existsSync(produced) || (result.return_code != null && result.return_code !== 0)) {
-        const reason = result.error_string && result.error_string !== 'Success.'
-          ? result.error_string
-          : (error && error.message) || String(stderr || stdout).split('\n').filter(Boolean).slice(-3).join(' ');
-        cleanup();
-        reject(new Error(`Bambu Studio could not slice this model: ${reason || 'no output was produced.'}`));
-        return;
-      }
-      const filePath = path.join(outDir, outName);
-      fs.copyFileSync(produced, filePath);
-
-      const plate = (result.sliced_plates || [])[0] || {};
-      let grams;
-      let seconds = plate.main_predication ? Math.round(plate.main_predication) : undefined;
-      try {
-        const gcode = fs.readFileSync(path.join(work, 'plate_1.gcode'), 'utf8').slice(0, 4000);
-        const weight = /total filament weight \[g\] : ([\d.]+)/.exec(gcode);
-        if (weight) grams = Math.round(parseFloat(weight[1]) * 10) / 10;
-        const time = /total estimated time: (?:(\d+)d )?(?:(\d+)h )?(?:(\d+)m )?(?:(\d+)s)?/.exec(gcode);
-        if (time) seconds = (+time[1] || 0) * 86400 + (+time[2] || 0) * 3600 + (+time[3] || 0) * 60 + (+time[4] || 0);
-      } catch {}
-      cleanup();
-      resolve({ filePath, estimatedTime: seconds, estimatedFilament: grams, profiles: built.names });
+      fs.rmSync(path.join(work, 'result.json'), { force: true });
+      const log = String(stderr || '') + String(stdout || '');
+      const reason = result.error_string && result.error_string !== 'Success.' ? result.error_string
+        : (log.match(/^(?!.*glfw).*(?:error|match|failed).*$/im) || [])[0]
+        || (error && error.message);
+      resolve({ result, reason });
     });
   });
 }
 
-module.exports = { status, slice, listOptions, findInstall, buildProfiles };
+function writeProfiles(work, built) {
+  fs.writeFileSync(path.join(work, 'machine.json'), JSON.stringify(built.machine));
+  fs.writeFileSync(path.join(work, 'process.json'), JSON.stringify(built.process));
+  const names = built.filaments.map((json, i) => {
+    const file = path.join(work, `filament${i + 1}.json`);
+    fs.writeFileSync(file, JSON.stringify(json));
+    return file;
+  });
+  return [
+    '--load-settings', `${path.join(work, 'machine.json')};${path.join(work, 'process.json')}`,
+    '--load-filaments', names.join(';'),
+  ];
+}
+
+/** Collects the finished file and its time / weight estimates. */
+function finish(work, outName, outDir, built, result) {
+  const filePath = path.join(outDir, outName);
+  fs.copyFileSync(path.join(work, outName), filePath);
+  const plate = (result.sliced_plates || [])[0] || {};
+  let grams;
+  let seconds = plate.main_predication ? Math.round(plate.main_predication) : undefined;
+  try {
+    const gcode = fs.readFileSync(path.join(work, 'plate_1.gcode'), 'utf8').slice(0, 4000);
+    const weight = /total filament weight \[g\] : ([\d.,]+)/.exec(gcode);
+    if (weight) grams = Math.round(weight[1].split(',').reduce((sum, g) => sum + parseFloat(g || 0), 0) * 10) / 10;
+    const time = /total estimated time: (?:(\d+)d )?(?:(\d+)h )?(?:(\d+)m )?(?:(\d+)s)?/.exec(gcode);
+    if (time) seconds = (+time[1] || 0) * 86400 + (+time[2] || 0) * 3600 + (+time[3] || 0) * 60 + (+time[4] || 0);
+  } catch {}
+  return { filePath, estimatedTime: seconds, estimatedFilament: grams, profiles: built.names, filamentCount: built.filaments.length };
+}
+
+/**
+ * Slices one file (STL or 3MF), placed automatically, and writes `<outDir>/<jobId>.gcode.3mf`.
+ * Resolves to { filePath, estimatedTime (seconds), estimatedFilament (grams), profiles }.
+ */
+async function slice(modelPath, outDir, jobId, settings = {}) {
+  const install = findInstall();
+  if (!install) throw new Error(status().note);
+  const built = buildProfiles(install.profiles, settings);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'islicer-'));
+  try {
+    const outName = `${jobId}.gcode.3mf`;
+    const { result, reason } = await run(install, [
+      '--slice', '0', '--arrange', settings.keepLayout ? '0' : '1',
+      '--orient', settings.keepLayout || settings.autoOrient === false ? '0' : '1',
+      ...writeProfiles(work, built),
+      '--outputdir', work, '--export-3mf', outName, modelPath,
+    ], work);
+    if (!fs.existsSync(path.join(work, outName)) || (result.return_code != null && result.return_code !== 0)) {
+      throw new Error(`Bambu Studio could not slice this model: ${reason || 'no output was produced.'}`);
+    }
+    return finish(work, outName, outDir, built, result);
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
+const OBJECT_SETTINGS = {
+  infill: (v) => ({ sparse_infill_density: `${Math.round(Number(v))}%` }),
+  walls: (v) => ({ wall_loops: String(Math.round(Number(v))) }),
+  supports: (v) => (v === 'off' ? { enable_support: '0' }
+    : v === 'tree' || v === 'normal' ? { enable_support: '1', support_type: `${v}(auto)` } : {}),
+};
+
+/**
+ * Slices a plate laid out in the app: one separate object per model, each with its
+ * own filament slot, settings and painted supports / seams / colours.
+ * objects: [{ name, vertices, extruder, settings: { infill, walls, supports }, paint }]
+ *
+ * Bambu Studio's command line only gives a multi-filament project the right shape
+ * when it builds the project itself, so this goes in two steps: let it turn a plain
+ * 3MF into a project, adjust the project, then slice that.
+ */
+async function slicePlate(objects, outDir, jobId, settings = {}) {
+  const install = findInstall();
+  if (!install) throw new Error(status().note);
+  const { writeProject, unzip, zip } = require('./threemf');
+  const slotCount = Math.max(1, ...objects.map((o) => Number(o.extruder) || 1),
+    ...objects.flatMap((o) => (o.paint && o.paint.color ? o.paint.color.filter(Boolean) : [])));
+  const filamentKeys = Array.from({ length: slotCount }, (_, i) =>
+    (settings.filaments && settings.filaments[i]) || settings.filament || 'PLA');
+  const built = buildProfiles(install.profiles, { ...settings, filaments: filamentKeys });
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'islicer-'));
+  try {
+    const plain = path.join(work, 'plate.3mf');
+    writeProject(objects, plain);
+    const profileArgs = writeProfiles(work, built);
+
+    // Step 1: Bambu Studio makes the project (no slicing yet).
+    const first = await run(install, ['--arrange', '0', '--orient', '0', ...profileArgs,
+      '--outputdir', work, '--export-3mf', 'project.3mf', plain], work);
+    const projectPath = path.join(work, 'project.3mf');
+    if (!fs.existsSync(projectPath)) throw new Error(`Bambu Studio could not read the plate: ${first.reason || 'no output.'}`);
+
+    // Step 2: per-object filament and settings, and enough filament slots.
+    const files = unzip(fs.readFileSync(projectPath));
+    let config = files.get('Metadata/model_settings.config').toString('utf8');
+    config = config.replace(/<object id="(\d+)">([\s\S]*?)<\/object>/g, (block, id, body) => {
+      const source = /key="source_object_id" value="(\d+)"/.exec(body);
+      const object = objects[source ? Number(source[1]) : -1];
+      if (!object) return block;
+      const extra = {};
+      for (const [key, value] of Object.entries(object.settings || {})) {
+        if (value != null && value !== '' && OBJECT_SETTINGS[key]) Object.assign(extra, OBJECT_SETTINGS[key](value));
+      }
+      // Painted supports need supports on; "manual" means only where painted.
+      const painted = object.paint && object.paint.supports && object.paint.supports.some((s) => s === 1);
+      const supportsOn = extra.enable_support ? extra.enable_support === '1' : Boolean(settings.supportEnabled);
+      if (painted && !supportsOn) {
+        extra.enable_support = '1';
+        extra.support_type = settings.supportType === 'normal' ? 'normal(manual)' : 'tree(manual)';
+      }
+      const esc = (t) => String(t).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      let out = body
+        .replace(/<metadata key="name" value="[^"]*"\/>/, `<metadata key="name" value="${esc(object.name || `Model ${id}`)}"/>`)
+        .replace(/<metadata key="extruder" value="\d+"\/>/, `<metadata key="extruder" value="${Number(object.extruder) || 1}"/>`
+          + Object.entries(extra).map(([k, v]) => `\n    <metadata key="${k}" value="${esc(v)}"/>`).join(''));
+      return `<object id="${id}">${out}</object>`;
+    });
+    files.set('Metadata/model_settings.config', Buffer.from(config));
+
+    if (slotCount > 1) {
+      const project = JSON.parse(files.get('Metadata/project_settings.config').toString('utf8'));
+      for (const [key, value] of Object.entries(project)) {
+        if (Array.isArray(value) && value.length === 1 && /^filament_/.test(key)) project[key] = Array(slotCount).fill(value[0]);
+      }
+      const colours = Array.isArray(settings.colors) ? settings.colors : [];
+      project.filament_colour = Array.from({ length: slotCount }, (_, i) => colours[i] || ['#00AE42', '#F72323', '#2850E0', '#F2C230'][i % 4]);
+      project.flush_volumes_matrix = Array.from({ length: slotCount * slotCount }, (_, i) =>
+        (Math.floor(i / slotCount) === i % slotCount ? '0' : '280'));
+      project.flush_volumes_vector = Array(slotCount * 2).fill('140');
+      files.set('Metadata/project_settings.config', Buffer.from(JSON.stringify(project, null, 4)));
+    }
+    const ready = path.join(work, 'ready.3mf');
+    fs.writeFileSync(ready, zip([...files].filter(([name]) => !/^Metadata\/(plate_\d|slice_info|filament_sequence)/.test(name))
+      .map(([name, data]) => ({ name, data }))));
+
+    // Step 3: slice it.
+    const outName = `${jobId}.gcode.3mf`;
+    const { result, reason } = await run(install, ['--slice', '0', '--outputdir', work, '--export-3mf', outName, ready], work);
+    if (!fs.existsSync(path.join(work, outName)) || (result.return_code != null && result.return_code !== 0)) {
+      throw new Error(`Bambu Studio could not slice this plate: ${reason || 'no output was produced.'}`);
+    }
+    return finish(work, outName, outDir, built, result);
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
+module.exports = { status, slice, slicePlate, listOptions, findInstall, buildProfiles };

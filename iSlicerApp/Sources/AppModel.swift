@@ -120,8 +120,14 @@ final class AppModel {
         case let .file(file):
             id = try await bridge.startSlice(files: [file.url], layout: nil, name: file.name, settings: settings)
         case let .plate(plate):
-            let payload = plate.payload
-            let name = plate.items.count == 1 ? plate.items[0].file.name : "plate-\(plate.items.count)-models.stl"
+            let payload = try plate.payload()
+            defer { if let folder = payload.files.first?.deletingLastPathComponent() { try? FileManager.default.removeItem(at: folder) } }
+            var settings = settings
+            let used = Array(plate.filaments.prefix(plate.slotsUsed))
+            settings.filaments = used.map(\.type.rawValue)
+            settings.colors = used.map(\.hex)
+            settings.filament = used[0].type
+            let name = plate.items.count == 1 ? "\(plate.items[0].name).stl" : "plate-\(plate.items.count)-models.stl"
             id = try await bridge.startSlice(files: payload.files, layout: payload.layout, name: name, settings: settings)
         }
         var job = SliceJob(id: id, fileName: source.title, status: "slicing", printer: settings.printerModel.label)
@@ -136,6 +142,7 @@ final class AppModel {
             if job.status == "done" {
                 job.seconds = (status["estimatedTime"] as? NSNumber)?.intValue
                 job.grams = (status["estimatedFilament"] as? NSNumber)?.doubleValue
+                job.filamentCount = (status["filamentCount"] as? NSNumber)?.intValue
                 if let profiles = status["profiles"] as? [String: Any] {
                     job.profile = [profiles["process"] as? String, profiles["filament"] as? String]
                         .compactMap { $0 }.joined(separator: " · ")
@@ -147,8 +154,8 @@ final class AppModel {
         throw BridgeError("Slicing took too long. Try again.")
     }
 
-    func send(_ job: SliceJob, to printer: Printer, useAMS: Bool, amsSlot: Int) async throws {
-        try await bridge.print(jobID: job.id, printerID: printer.id, useAMS: useAMS, amsSlot: amsSlot)
+    func send(_ job: SliceJob, to printer: Printer, useAMS: Bool, amsSlots: [Int]) async throws {
+        try await bridge.print(jobID: job.id, printerID: printer.id, useAMS: useAMS, amsSlots: amsSlots)
     }
 
     private func remember(_ job: SliceJob) {

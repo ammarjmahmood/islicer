@@ -33,8 +33,12 @@ struct SliceView: View {
                         ForEach(PrinterModel.allCases) { Text($0.label).tag($0) }
                     }
                 }
-                Picker("Filament", selection: $settings.filament) {
-                    ForEach(Filament.allCases) { Text($0.rawValue).tag($0) }
+                if case let .plate(plate) = source {
+                    LabeledContent("Filament", value: plate.filaments.prefix(plate.slotsUsed).map(\.type.rawValue).joined(separator: " + "))
+                } else {
+                    Picker("Filament", selection: $settings.filament) {
+                        ForEach(Filament.allCases) { Text($0.rawValue).tag($0) }
+                    }
                 }
                 Picker("Build plate", selection: $settings.bedType) {
                     ForEach(BedType.allCases) { Text($0.label).tag($0) }
@@ -149,6 +153,8 @@ struct PrintSheet: View {
     @State private var printerID = ""
     @AppStorage("useAMS") private var useAMS = true
     @AppStorage("amsSlot") private var amsSlot = 0
+    /// AMS slot for each filament in the file (index = filament number - 1).
+    @State private var slots: [Int] = []
     @State private var sending = false
     @State private var outcome: String?
     @State private var sent = false
@@ -170,15 +176,30 @@ struct PrintSheet: View {
                 Section {
                     Toggle("Use the AMS", isOn: $useAMS)
                     if useAMS {
-                        Picker("Slot", selection: $amsSlot) {
-                            ForEach(0..<4, id: \.self) { Text("Slot \($0 + 1)").tag($0) }
+                        if (job.filamentCount ?? 1) > 1 {
+                            ForEach(0..<(job.filamentCount ?? 1), id: \.self) { index in
+                                Picker("Filament \(index + 1)", selection: Binding(
+                                    get: { slots.indices.contains(index) ? slots[index] : index % 4 },
+                                    set: { value in
+                                        while slots.count <= index { slots.append(slots.count % 4) }
+                                        slots[index] = value
+                                    })) {
+                                    ForEach(0..<4, id: \.self) { Text("AMS slot \($0 + 1)").tag($0) }
+                                }
+                            }
+                        } else {
+                            Picker("Slot", selection: $amsSlot) {
+                                ForEach(0..<4, id: \.self) { Text("Slot \($0 + 1)").tag($0) }
+                            }
+                            .pickerStyle(.segmented)
                         }
-                        .pickerStyle(.segmented)
                     }
                 } header: {
                     Text("Filament source")
                 } footer: {
-                    Text(useAMS ? "Pick the slot holding the filament you sliced for." : "Prints from the spool on the back of the printer.")
+                    Text(!useAMS ? "Prints from the spool on the back of the printer."
+                         : (job.filamentCount ?? 1) > 1 ? "Match each filament to the AMS slot that holds it."
+                         : "Pick the slot holding the filament you sliced for.")
                 }
                 Section {
                     Button {
@@ -224,7 +245,14 @@ struct PrintSheet: View {
         sending = true
         Task {
             do {
-                try await model.send(job, to: printer, useAMS: useAMS, amsSlot: amsSlot)
+                let count = job.filamentCount ?? 1
+                let mapping = count > 1
+                    ? (0..<count).map { slots.indices.contains($0) ? slots[$0] : $0 % 4 }
+                    : [amsSlot]
+                if count > 1 && !useAMS {
+                    throw BridgeError("This plate uses \(count) filaments, so it needs the AMS.")
+                }
+                try await model.send(job, to: printer, useAMS: useAMS, amsSlots: mapping)
                 sent = true
                 outcome = "\(job.fileName) was sent to \(printer.name)."
             } catch {

@@ -12,7 +12,8 @@ const QRCode = require('qrcode');
 const bambuSlicer = require('./bambu-slicer');
 const remote = require('./remote');
 const { discover } = require('./discover');
-const { buildPlate } = require('./plate');
+const { readSTL, place, bounds } = require('./plate');
+const threemf = require('./threemf');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8005);
@@ -699,7 +700,11 @@ async function printProject(printer, filePath, originalName, options = {}) {
       vibration_cali: true,
       layer_inspect: false,
       use_ams: useAms,
-      ams_mapping: useAms ? [Number(options.amsSlot || 0)] : [],
+      // One AMS slot per filament in the file, in order (0-3 = slots 1-4 of the first AMS).
+      ams_mapping: useAms
+        ? (Array.isArray(options.amsMapping) && options.amsMapping.length
+          ? options.amsMapping.map((slot) => Number(slot) || 0) : [Number(options.amsSlot || 0)])
+        : [],
     },
   };
   await publishPrinterCommand(printer, payload);
@@ -903,6 +908,35 @@ app.post('/printers/:id/test', async (req, res, next) => {
 
 const BED = { A1Mini: [180, 180, 180], A1: [256, 256, 256], X1C: [256, 256, 250], X1: [256, 256, 250], P1S: [256, 256, 250], P1P: [256, 256, 250] };
 
+// Opens a 3MF so the app can lay its objects out again: returns each one as an STL.
+app.post('/models', upload.single('model'), (req, res, next) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded.' });
+      return;
+    }
+    let found;
+    try {
+      found = threemf.readModels(req.file.path);
+    } finally {
+      fs.rmSync(req.file.path, { force: true });
+    }
+    const models = found.map(({ name, vertices }) => {
+      const count = vertices.length / 9;
+      const buffer = Buffer.alloc(84 + count * 50);
+      buffer.writeUInt32LE(count, 80);
+      for (let t = 0; t < count; t++) {
+        for (let k = 0; k < 9; k++) buffer.writeFloatLE(vertices[t * 9 + k], 84 + t * 50 + 12 + k * 4);
+      }
+      return { name, stl: buffer.toString('base64') };
+    });
+    res.json({ models });
+  } catch (err) {
+    err.status = err.status || 400;
+    next(err);
+  }
+});
+
 // One model, or a whole plate: several STL files plus a `plate` layout from the app
 // ([{ file: index, matrix, scale, x, y }]) that the bridge bakes into one model.
 app.post('/slice', upload.array('model', 24), async (req, res, next) => {
@@ -921,26 +955,49 @@ app.post('/slice', upload.array('model', 24), async (req, res, next) => {
     const gcodePath = path.join(GCODE_DIR, useBambu ? `${jobId}.gcode.3mf` : `${jobId}.gcode`);
     let modelPath;
 
+    let objects = null;
     if (layout) {
-      const items = layout.map((item) => {
+      // Each model stays its own object, placed exactly as in the app.
+      const meshes = new Map();
+      objects = layout.map((item, index) => {
         const file = files[Number(item.file)];
         if (!file) throw Object.assign(new Error('The plate refers to a file that was not uploaded.'), { status: 400 });
         if (path.extname(file.originalname || '').toLowerCase() !== '.stl') {
-          throw Object.assign(new Error('Plates with several models need STL files. Slice a 3MF by itself.'), { status: 400 });
+          throw Object.assign(new Error('Plate models must be sent as STL.'), { status: 400 });
         }
-        return { ...item, path: file.path };
+        if (!meshes.has(file.path)) meshes.set(file.path, readSTL(file.path));
+        const vertices = place(meshes.get(file.path), item);
+        const count = vertices.length / 9;
+        const paint = {};
+        for (const channel of ['supports', 'seam', 'color']) {
+          const groups = item.paint && item.paint[channel];
+          if (!groups) continue;
+          const states = new Uint8Array(count);
+          for (const [state, list] of Object.entries(groups)) {
+            for (const t of list) if (t >= 0 && t < count) states[t] = Number(state);
+          }
+          paint[channel] = Array.from(states);
+        }
+        return {
+          name: String(item.name || `Model ${index + 1}`).slice(0, 60),
+          vertices,
+          extruder: Math.min(Math.max(Number(item.extruder) || 1, 1), 16),
+          settings: item.settings || {},
+          paint,
+        };
       });
-      modelPath = path.join(UPLOAD_DIR, `${jobId}.stl`);
-      const size = buildPlate(items, modelPath);
       for (const file of files) fs.rmSync(file.path, { force: true });
       const bed = BED[settings.printerModel] || BED.P1S;
-      if (size.min[0] < -0.5 || size.min[1] < -0.5 || size.max[0] > bed[0] + 0.5 || size.max[1] > bed[1] + 0.5) {
-        throw Object.assign(new Error('Part of the plate hangs over the edge of the bed. Move or shrink the models.'), { status: 400 });
+      for (const object of objects) {
+        const size = bounds(object.vertices);
+        if (size.min[0] < -0.5 || size.min[1] < -0.5 || size.max[0] > bed[0] + 0.5 || size.max[1] > bed[1] + 0.5) {
+          throw Object.assign(new Error(`${object.name} hangs over the edge of the bed. Move or shrink it.`), { status: 400 });
+        }
+        if (size.max[2] > bed[2]) {
+          throw Object.assign(new Error(`${object.name} is ${Math.round(size.max[2])} mm tall; this printer fits ${bed[2]} mm.`), { status: 400 });
+        }
       }
-      if (size.max[2] > bed[2]) {
-        throw Object.assign(new Error(`The plate is ${Math.round(size.max[2])} mm tall; this printer fits ${bed[2]} mm.`), { status: 400 });
-      }
-      settings.keepLayout = true;
+      modelPath = null;
     } else {
       const ext = path.extname(filename).toLowerCase();
       modelPath = path.join(UPLOAD_DIR, `${jobId}${ext}`);
@@ -960,9 +1017,12 @@ app.post('/slice', upload.array('model', 24), async (req, res, next) => {
     res.json({ jobId, statusUrl: `/status/${jobId}` });
 
     try {
-      const stats = useBambu
-        ? await bambuSlicer.slice(modelPath, GCODE_DIR, jobId, settings)
-        : await sliceWithCura(modelPath, gcodePath, settings);
+      if (objects && !useBambu) throw new Error('Plates need Bambu Studio on the bridge. Run the installer again.');
+      const stats = objects
+        ? await bambuSlicer.slicePlate(objects, GCODE_DIR, jobId, settings)
+        : useBambu
+          ? await bambuSlicer.slice(modelPath, GCODE_DIR, jobId, settings)
+          : await sliceWithCura(modelPath, gcodePath, settings);
       const { filePath: _filePath, ...publicStats } = stats;
       setJob(jobId, {
         ...jobs.get(jobId),

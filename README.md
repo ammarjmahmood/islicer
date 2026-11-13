@@ -83,20 +83,32 @@ open iSlicer.xcodeproj
 | `Sources/Bridge.swift` | Finds the bridge and talks to it: health, printers, discovery, slice, print. |
 | `Sources/AppModel.swift` | App state: connection, printers, imported models, recent slices. |
 | `Sources/FilesView.swift` | Models list, import, "ready to print" list. |
-| `Sources/Plate.swift` | The build plate: models with rotation, scale and position; arrange; fit checks. |
-| `Sources/PlateEditorView.swift` | 3D plate editor (SceneKit): drag to move, turn, scale, lay flat, duplicate. |
+| `Sources/Plate.swift` | The build plate: models, filament slots, per-model settings, paint, cut, arrange, fit and overlap checks. |
+| `Sources/PlateEditorView.swift` | 3D plate editor (SceneKit): move, turn, scale, lay flat, cut, paint; filament and model settings sheets. |
+| `Sources/TriMesh.swift` | Triangle meshes: STL read/write, cutting with capped faces, splitting for paint. |
 | `Sources/SliceView.swift` | Slice settings and the print sheet. |
 | `Sources/PrintersView.swift` | Printers, and Add Printer with automatic discovery. |
 | `Sources/SetupViews.swift` | Setup checklist, pairing card, QR scanner. |
 | `Sources/SettingsView.swift` | Pairing, install command, manual address. |
 
-The plate editor: opening an STL puts it on a 3D bed sized for the printer. Add more models
-with ＋, drag one to move it, drag empty space to look around. Turn 90° about X, Y or Z, spin
-15°, scale, duplicate, auto-arrange, or tap **Lay flat** and then a face to rest it on the bed.
-The app sends the files plus the layout; the bridge bakes it into one model (`server/plate.js`)
-and slices with arranging turned off, so it prints exactly as placed. 3MF files skip the editor
-and are placed automatically. Not in the editor yet: cutting, painting supports or seams,
-per-model settings, multi-colour.
+The plate editor: opening an STL or 3MF puts it on a 3D bed sized for the printer (a 3MF is
+unpacked by the bridge into its separate models). Add more with ＋, drag one to move it, drag
+empty space to look around. Turn 90° about X, Y or Z, spin 15°, scale, duplicate, auto-arrange,
+or tap **Lay flat** and then a face. Models that hang off the bed or overlap turn red and block
+slicing.
+
+- **Cut** slices a model horizontally at any height, closes both cut faces, and can turn the top
+  piece cut-side down. Turn the model first to cut along another direction.
+- **Paint** supports (add or block), seams, or a filament colour onto a model. Large faces are
+  split into small triangles so paint lands under the finger.
+- **Settings** per model: its filament, infill, walls, supports.
+- **Filaments** (palette button): up to four slots with type and colour. When printing, each
+  filament is matched to an AMS slot.
+
+Each model stays a separate object, so the printer can skip one that fails. The bridge writes a
+plain 3MF with the painted triangles (`server/threemf.js`), lets Bambu Studio turn it into a
+project with the right number of filaments, sets each object's filament and settings, then slices
+it with arranging off (`slicePlate` in `server/bambu-slicer.js`).
 
 Adding a printer: the bridge listens for Bambu printers announcing themselves on the home
 network (`server/discover.js`) and offers them in the app with name, model, IP and serial

@@ -64,6 +64,9 @@ struct SliceSettings: Codable, Equatable {
     var supportEnabled = false
     var supportType = "tree"
     var adhesionType = "none"
+    /// For a plate: the filament in each slot, and its colour ("#RRGGBB").
+    var filaments: [String]?
+    var colors: [String]?
 
     static let layerHeights: [Double] = [0.08, 0.12, 0.16, 0.2, 0.24, 0.28]
     static let patterns = ["grid", "gyroid", "honeycomb", "lines", "triangles"]
@@ -111,6 +114,7 @@ struct SliceJob: Codable, Identifiable, Hashable {
     var profile: String?
     var printer: String?
     var error: String?
+    var filamentCount: Int?
     var created = Date()
 
     var isDone: Bool { status == "done" }

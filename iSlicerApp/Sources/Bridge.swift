@@ -218,13 +218,33 @@ final class Bridge {
         return id
     }
 
+    /// Unpacks a 3MF on the home computer into its separate models, as STL data.
+    func openModels(_ file: URL) async throws -> [(name: String, data: Data)] {
+        let boundary = "islicer-\(UUID().uuidString)"
+        var body = Data()
+        let fileName = file.lastPathComponent.replacingOccurrences(of: "\"", with: "")
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"; filename=\"\(fileName)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+        body.append(try Data(contentsOf: file))
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        let reply = json(try await send("/models", method: "POST", body: body,
+                                        contentType: "multipart/form-data; boundary=\(boundary)", timeout: 300))
+        guard let models = reply["models"] as? [[String: Any]] else {
+            throw BridgeError("Your home computer could not open this file. Update the bridge by running the installer again.")
+        }
+        return models.compactMap { item in
+            guard let text = item["stl"] as? String, let data = Data(base64Encoded: text) else { return nil }
+            return (item["name"] as? String ?? "Model", data)
+        }
+    }
+
     func sliceStatus(_ id: String) async throws -> [String: Any] {
         json(try await send("/status/\(id)"))
     }
 
-    func print(jobID: String, printerID: String, useAMS: Bool, amsSlot: Int) async throws {
+    func print(jobID: String, printerID: String, useAMS: Bool, amsSlots: [Int]) async throws {
         let body = try JSONSerialization.data(withJSONObject: [
-            "jobId": jobID, "printerId": printerID, "useAms": useAMS, "amsSlot": amsSlot,
+            "jobId": jobID, "printerId": printerID, "useAms": useAMS,
+            "amsSlot": amsSlots.first ?? 0, "amsMapping": amsSlots,
         ])
         _ = try await send("/print", method: "POST", body: body, contentType: "application/json", timeout: 120)
     }

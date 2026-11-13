@@ -50,6 +50,11 @@ struct FilesView: View {
                         .swipeActions {
                             Button("Delete", role: .destructive) { model.delete(file) }
                         }
+                        .contextMenu {
+                            if !file.isSTL {
+                                NavigationLink("Slice as is, with its own layout") { SliceView(source: .file(file)) }
+                            }
+                        }
                     }
                 } header: {
                     if !model.files.isEmpty { Text("Models") }
@@ -82,8 +87,7 @@ struct FilesView: View {
             }
             .navigationTitle("iSlicer")
             .navigationDestination(for: ModelFile.self) { file in
-                // STL files open in the plate editor. A 3MF already carries its own layout.
-                if file.isSTL { PlateEditorView(file: file) } else { SliceView(source: .file(file)) }
+                PlateEditorView(file: file)
             }
             .toolbar {
                 Button { importing = true } label: { Image(systemName: "plus") }
